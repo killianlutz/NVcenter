@@ -7,7 +7,6 @@ from jax.flatten_util import ravel_pytree
 from _classes import ControlSystem
 from _line_search import golden_section
 from _quantum import *
-
 key = jax.random.PRNGKey(0)
 
 ###############################
