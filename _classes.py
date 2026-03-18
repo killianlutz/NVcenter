@@ -3,7 +3,6 @@ import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 from _quantum import matrix_to_vec, vec_to_matrix, dagger, trace_dot, matrix_to_coeff
 
-
 @jax.tree_util.register_pytree_node_class
 class ControlSystem:
     def __init__(self, static_parameters):
@@ -34,16 +33,25 @@ class ControlSystem:
 
     def loss(self, control, dynamic_p):
         loss_fn = self.static_p["loss_fn"]
-        U = self.final_state(control, dynamic_p)
-        return loss_fn(U, (control, dynamic_p, self.static_p))
+        H0 = self.static_p["system"]["drift"]
+        T, U1 = control[0], dynamic_p
+        U1_moving = jnp.exp(1j*T*H0) @ U1
+
+        U_final = self.final_state(control, dynamic_p)
+        return loss_fn(U_final @ dagger(U1_moving), (control, dynamic_p, self.static_p))
 
     def natural_gradient(self, control, dynamic_p):
         eps = self.static_p["optimizer"]["regularization"]
         flat_control, unravel = ravel_pytree(control)
 
         def model(u_flat, p):
+            control = unravel(u_flat)
+            H0 = self.static_p["system"]["drift"]
+            T, U1 = control[0], p
+            U1_moving = jnp.exp(1j * H0 * T) @ U1
+
             U_vec = matrix_to_vec(
-                self.final_state(unravel(u_flat), p),
+                self.final_state(control, p) @ dagger(U1_moving),
                 self.static_p["mat_basis"]
             )
             return U_vec, U_vec
@@ -145,19 +153,27 @@ class ControlSystem:
         return optimized_control, losses, n_iter
 
     def pulses(self, control, dynamic_p):
-        g_vec = control[-1]
-        g = vec_to_matrix(g_vec, self.static_p["su_basis"])
+        H0 = self.static_p["system"]["drift"]
         Hc = self.static_p["system"]["ctrl"]
+        ts = self.static_p["integrator"]["ts"]
+        M = self.static_p["constraints"]["max_amplitude"]
+
+        T, g_vec = control
+        g = vec_to_matrix(g_vec, self.static_p["su_basis"])
         Us = self.trajectory(control, dynamic_p)
 
-        def feedback(U, g):
-            g_conjugate_U = jnp.einsum('ij, jk, kl -> il', U, g, dagger(U))
-            return jax.vmap(
-                lambda x, y: jnp.real(trace_dot(x, y)),
-                in_axes=(0, None)
-            )(Hc, g_conjugate_U)
+        def F(Hj, y, t):
+            expiH0 = jnp.exp(1j * t * T * H0)
+            Hj_tilde = expiH0 @ Hj @ dagger(expiH0)
+            return jnp.real(trace_dot(Hj_tilde, y))
 
-        return jax.vmap(feedback, in_axes=(0, None))(Us, g)
+        def feedback(U, g, t):
+            g_conjugate_U = jnp.einsum('ij, jk, kl -> il', U, g, dagger(U))
+            u = jax.vmap(F, in_axes=(0, None, None))(Hc, g_conjugate_U, t)
+            scaling = M/jnp.linalg.norm(u)
+            return u * scaling
+
+        return jax.vmap(feedback, in_axes=(0, None, 0))(Us, g, ts)
 
     def tree_flatten(self):
         return (), self.static_p

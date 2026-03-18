@@ -13,47 +13,28 @@ key = jax.random.PRNGKey(0)
 ##### AUXILIARY FUNCTIONS #####
 ###############################
 def plot_results(csys:ControlSystem, control, dynamic_p, losses):
+    T = control[0]
     ts = csys.static_p["integrator"]["ts"]
-    t_to_idx = csys.static_p["t_to_idx"]
-
-    T, a, _ = control
-    A = jax.vmap(lambda t: a[t_to_idx(t)])(ts[:-1])
-    pulses = csys.pulses(control, dynamic_p)  # g -> pulse, w/o a(t)
+    pulses = csys.pulses(control, dynamic_p)  # g -> pulse
     energy = jnp.linalg.norm(pulses, axis=1)
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    fig, axes = plt.subplots(1, 2, figsize=(12, 8))
 
     # LOSS
-    axes[0, 1].semilogy(losses, linestyle='-', color="k")
-    axes[0, 1].set_title("Loss")
-    axes[0, 1].set_xlabel("Iteration")
-    axes[0, 1].set_ylabel("Infidelity")
-    axes[0, 1].grid(True)
-
-    # AMPLITUDE
-    sc = axes[0, 0].scatter(ts[:-1], A, c=jnp.sign(A), cmap='bwr', edgecolor='k')
-    axes[0, 0].hlines(1.0, 0.0, 1.0, color='r', linestyles='dashed')
-    axes[0, 0].hlines(0.0, 0.0, 1.0, color='k', linestyles='solid')
-    axes[0, 0].set_title(f"$T$ = {T[0]:.2f}")
-    axes[0, 0].set_xlabel(r"Time $t/T$")
-    axes[0, 0].set_ylabel(r"Amplitude $a(t)$")
-    axes[0, 0].grid(True)
-    fig.colorbar(sc, ax=axes[0, 0], label="sign(a)")
+    axes[0].semilogy(losses, '-x', color="k")
+    axes[0].set_title("Loss")
+    axes[0].set_xlabel("Iteration")
+    axes[0].set_ylabel("Infidelity")
+    axes[0].grid(True)
 
     # PULSES
-    axes[1, 0].scatter(ts, pulses[:, 0], c='b', label="$u_1(t)$")
-    axes[1, 0].scatter(ts, pulses[:, 1], c='r', label="$u_2(t)$")
-    axes[1, 0].plot(ts, energy, color='k', label="$|u(t)|$")
-    axes[1, 0].set_title(f"Pulses w/o a(t)")
-    axes[1, 0].set_xlabel(r"Time $t/T$")
-    axes[1, 0].grid(True)
-    axes[1, 0].legend()
-
-    # NORM PULSES
-    axes[1, 1].plot(ts[:-1], energy[:-1]*jnp.abs(A), color='k')
-    axes[1, 1].set_title(f"Effective pulses norm $|a(t)|*|u(t)|$")
-    axes[1, 1].set_xlabel(r"Time $t/T$")
-    axes[1, 1].grid(True)
+    axes[1].plot(ts, pulses[:, 0], c='b', label="$u_1(t)$", linewidth=3)
+    axes[1].plot(ts, pulses[:, 1], c='r', label="$u_2(t)$", linewidth=3)
+    axes[1].plot(ts, energy, linestyle='--', color='k', label="$|u(t)|$")
+    axes[1].set_title(f"Pulses")
+    axes[1].set_xlabel(r"Time $t/T$")
+    axes[1].grid(True)
+    axes[1].legend(loc='upper right')
 
     plt.tight_layout()
     fig.show()
@@ -61,27 +42,30 @@ def plot_results(csys:ControlSystem, control, dynamic_p, losses):
 
 def vector_field(U, t, p):
     control, _, static_p = p
+    M = static_p["constraints"]["max_amplitude"]
     H0 = static_p["system"]["drift"]
     Hc = static_p["system"]["ctrl"]
     su_basis = static_p["su_basis"]
-    t_to_idx = static_p["t_to_idx"]
 
-    T, a, g_vec = control
-    a_t = a[t_to_idx(t)]
+    T, g_vec = control
     g = vec_to_matrix(g_vec, su_basis)
-
     g_conjugate_U = jnp.einsum('ij, jk, kl -> il', U, g, dagger(U))
-    pulse_times_hamiltonian = jax.vmap(
-        lambda x, y: jnp.real(trace_dot(x, y))*x,
-        in_axes=(0, None)
-    )(Hc, g_conjugate_U)
-    control_hamiltonian = jnp.sum(pulse_times_hamiltonian, axis=0)
 
-    return -1j * T * (H0 + a_t*control_hamiltonian) @ U
+    expiH0 = jnp.exp(1j*t*T*H0)
+    Hc_tilde = jax.vmap(lambda H: expiH0 @ H @ dagger(expiH0))(Hc)
+    pulses = jax.vmap(
+        lambda x, y: jnp.real(trace_dot(x, y)),
+        in_axes=(0, None)
+    )(Hc_tilde, g_conjugate_U)
+
+    pulses_scaled = pulses * M/jnp.linalg.norm(pulses)
+    control_hamiltonian = jnp.tensordot(pulses_scaled, Hc_tilde, axes=1)
+
+    return -1j * T * control_hamiltonian @ U
 
 def loss_fn(x, p):
-    U1 = p[1]
-    return infidelity(x, U1)
+    identity = p[-1]["system"]["initial_state"]
+    return infidelity(x, identity)
 
 def runge_kutta(f, x, t, p):
     h = p[-1]["integrator"]["h"]
@@ -111,39 +95,33 @@ S, I, SI = spin_matrices()
 drift = SI["zz"]
 ctrl = jnp.stack((S["x"], S["y"]))
 U0 = jnp.eye(d, dtype=jnp.complex64)
+M = 5.0 # maximal control amplitude
 
 ###### CONTROL
 time_horizon = jnp.ones(1)
-amplitude = jnp.ones(len(ts) - 1)
 g_vec = jax.random.normal(keys[0], su_dim)
-init_control = (time_horizon, amplitude, g_vec)
+init_control = (time_horizon, g_vec)
 
 ###### DYNAMIC ARGUMENTS
 U1 = sampleSU(d, keys[1]) # target
 dynamic_p = U1
 
 ###### STATIC ARGUMENTS
-M = 50.0 # roughly the maximal control amplitude
-def proj_a(a, da, lr):
-    b = a + lr*da
-    return (jnp.abs(b) <= M)*b + (jnp.abs(b) > M)*M*b/abs(b)
-
 # same pytree structure as the control, one projector per control variable
-# if the control is not to be updated, set the corresponding projector to (x, dx, lr) -> x
+# if T must be constant, just set the corresponding projector to (lambda T, dT, lr: T)
 projector = (
     lambda T, dT, lr: jnp.maximum(T + lr*dT, 0.0),
-    proj_a,
     lambda g, dg, lr: g + lr*dg
 )
-
-t_to_idx = lambda t: 1 + jnp.array(jnp.floor(t/h - 1/2), dtype=int)
 
 static_p = {
     "loss_fn": loss_fn,
     "projector": projector,
-    "t_to_idx": t_to_idx,
     "mat_basis": mat_basis,
     "su_basis": su_basis,
+    "constraints": {
+        "max_amplitude": M
+    },
     "system": {
         "initial_state": U0,
         "drift": drift,
@@ -159,17 +137,13 @@ static_p = {
         "normalize_gradient": False,
         "regularization": 1e-3,
         "n_max": 500,
-        "abstol_loss": 1e-5,
-        "reltol_dist": 1e-5,
+        "abstol_loss": 1e-6,
+        "reltol_dist": 1e-6,
         "line_search": {
             "search_fn": golden_section, # signature (f, dynamic, static) -> step, val
             "log_interval": (-4.0, 0.0),
             "abstol": 1e-2,
             "n_max": 200
         }
-    },
-    "root_finding": {
-        "reltol_dist": 1e-8,
-        "n_max": 1_000
     }
 }
