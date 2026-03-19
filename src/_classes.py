@@ -197,6 +197,15 @@ class ControlSystem:
         U1_moving = jnp.exp(1j * T * H0) @ U1
         return infidelity(U, U1_moving)
 
+    def save_to_npz(self, filename, control, dynamic_p):
+        target = dynamic_p
+        gate_time = control[0]
+        covector = control[-1]
+        time_points = self.static_p["integrator"]["ts"]
+        pulses = self.pulses(control, dynamic_p)
+
+        jnp.savez(filename, target, gate_time, covector, time_points, pulses)
+
     def tree_flatten(self):
         return (), self.static_p
 
