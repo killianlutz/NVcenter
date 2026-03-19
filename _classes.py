@@ -1,7 +1,9 @@
 import jax
 import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
-from _quantum import matrix_to_vec, vec_to_matrix, dagger, trace_dot, matrix_to_coeff
+from _quantum import matrix_to_vec, vec_to_matrix, dagger, trace_dot, matrix_to_coeff, infidelity
+from scipy.integrate import solve_ivp
+import numpy as np
 
 @jax.tree_util.register_pytree_node_class
 class ControlSystem:
@@ -174,6 +176,26 @@ class ControlSystem:
             return u * scaling
 
         return jax.vmap(feedback, in_axes=(0, None, 0))(Us, g, ts)
+
+    def validate(self, control, dynamic_p, **kwargs):
+        T = control[0]
+        U1 = dynamic_p
+        U0 = self.static_p["system"]["initial_state"]
+        H0 = self.static_p["system"]["drift"]
+        mat_basis = self.static_p["mat_basis"]
+        vector_field = self.static_p["integrator"]["vector_field"]
+
+        args = (control, dynamic_p, self.static_p)
+        def ode_velocity(t, y_vec):
+            y = vec_to_matrix(y_vec, mat_basis)
+            return matrix_to_vec(vector_field(y, t, args), mat_basis)
+        tspan = (0.0, 1.0)
+        y0 = np.asarray(matrix_to_vec(U0, mat_basis))
+        ys = solve_ivp(ode_velocity, tspan, y0, **kwargs).y
+
+        U = vec_to_matrix(ys[:, -1], mat_basis)
+        U1_moving = jnp.exp(1j * T * H0) @ U1
+        return infidelity(U, U1_moving)
 
     def tree_flatten(self):
         return (), self.static_p
