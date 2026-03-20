@@ -24,14 +24,14 @@ def plot_results(csys:ControlSystem, control, dynamic_p, losses):
     axes[0].semilogy(losses, '-x', color="k")
     axes[0].set_title("Loss")
     axes[0].set_xlabel("Iteration")
-    axes[0].set_ylabel("Infidelity")
+    axes[0].set_ylabel("Loss")
     axes[0].grid(True)
 
     # PULSES
     axes[1].plot(ts, pulses[:, 0], c='b', label="$u_1(t)$", linewidth=3)
     axes[1].plot(ts, pulses[:, 1], c='r', label="$u_2(t)$", linewidth=3)
     axes[1].plot(ts, energy, linestyle='--', color='k', label="$|u(t)|$")
-    axes[1].set_title(f"Pulses")
+    axes[1].set_title(f"Pulses | Gate time: {T[0]:.3f}")
     axes[1].set_xlabel(r"Time $t/T$")
     axes[1].grid(True)
     axes[1].legend(loc='upper right')
@@ -138,7 +138,7 @@ static_p = {
         "regularization": 1e-3,
         "n_max": 500,
         "abstol_loss": 1e-6,
-        "reltol_dist": 1e-6,
+        "reltol_dist": 1e-5,
         "line_search": {
             "search_fn": golden_section, # signature (f, dynamic, static) -> step, val
             "log_interval": (-4.0, 0.0),

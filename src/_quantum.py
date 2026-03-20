@@ -5,7 +5,7 @@ import scipy.sparse as sparse
 
 def pauli_matrices():
     sigma_x = jnp.array([[0, 1], [1, 0]], dtype=jnp.complex64)
-    sigma_y = jnp.array([[0, 1j], [-1j, 0]], dtype=jnp.complex64)
+    sigma_y = jnp.array([[0, -1j], [1j, 0]], dtype=jnp.complex64)
     sigma_z = jnp.array([[1, 0], [0, -1]], dtype=jnp.complex64)
     return {"x": sigma_x, "y": sigma_y, "z": sigma_z}
 

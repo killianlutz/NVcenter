@@ -164,14 +164,14 @@ class ControlSystem:
         g = vec_to_matrix(g_vec, self.static_p["su_basis"])
         Us = self.trajectory(control, dynamic_p)
 
-        def F(Hj, y, t):
+        def pulse(Hj, y, t):
             expiH0 = jnp.exp(1j * t * T * H0)
             Hj_tilde = expiH0 @ Hj @ dagger(expiH0)
             return jnp.real(trace_dot(Hj_tilde, y))
 
         def feedback(U, g, t):
             g_conjugate_U = jnp.einsum('ij, jk, kl -> il', U, g, dagger(U))
-            u = jax.vmap(F, in_axes=(0, None, None))(Hc, g_conjugate_U, t)
+            u = jax.vmap(pulse, in_axes=(0, None, None))(Hc, g_conjugate_U, t)
             scaling = M/jnp.linalg.norm(u)
             return u * scaling
 
@@ -182,6 +182,7 @@ class ControlSystem:
         U1 = dynamic_p
         U0 = self.static_p["system"]["initial_state"]
         H0 = self.static_p["system"]["drift"]
+        loss_fn = self.static_p["loss_fn"]
         mat_basis = self.static_p["mat_basis"]
         vector_field = self.static_p["integrator"]["vector_field"]
 
@@ -193,9 +194,9 @@ class ControlSystem:
         y0 = np.asarray(matrix_to_vec(U0, mat_basis))
         ys = solve_ivp(ode_velocity, tspan, y0, **kwargs).y
 
-        U = vec_to_matrix(ys[:, -1], mat_basis)
+        U_final = vec_to_matrix(ys[:, -1], mat_basis)
         U1_moving = jnp.exp(1j * T * H0) @ U1
-        return infidelity(U, U1_moving)
+        return loss_fn(U_final @ dagger(U1_moving), args)
 
     def save_to_npz(self, filename, control, dynamic_p):
         target = dynamic_p
