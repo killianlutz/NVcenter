@@ -1,6 +1,5 @@
 # _config.py contains the setup
 from scripts._config import *
-print(jax.devices())
 
 csys = ControlSystem(static_p)
 solve_fn = jax.jit(csys.solve_ocp)
@@ -9,8 +8,8 @@ solve_fn = jax.jit(csys.solve_ocp)
 ######### SOLVE ##############
 ##############################
 init_control = (
-    0.25*jnp.ones(1),
-    jax.random.normal(keys[25], su_dim)
+    0.30*2*jnp.pi*jnp.ones(1),
+    jax.random.normal(keys[10], su_dim)
 )
 
 U1 = CNOT() # or random gate using: sampleSU(d, keys[50])
@@ -18,7 +17,7 @@ dynamic_p = U1
 
 control, losses, n_iter = solve_fn(init_control, dynamic_p)
 losses = losses[:n_iter + 1] # not supported inside solve_fn (jit-compilation + n_iter dynamic)
-print(f"\n Iter: {n_iter} \n Loss: {losses[-1]:.1e} \n Gate time: {control[0][0]:.2f}")
+print(f"\n Iter: {n_iter} \n Loss: {losses[-1]:.1e} \n Gate time: {control[0][0]:.3f}")
 
 ##############################
 #### VALIDATE AND SAVE #######
@@ -30,7 +29,7 @@ csys.save_to_npz("./sims/example.npz", control, dynamic_p)
 ##############################
 ######### POST PROCESS #######
 ##############################
-# plot_results(csys, control, dynamic_p, losses)
+plot_results(csys, control, dynamic_p, losses)
 
 pulses = csys.pulses(control, dynamic_p)
 propagators = csys.trajectory(control, dynamic_p)

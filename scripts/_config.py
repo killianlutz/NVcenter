@@ -95,7 +95,7 @@ S, I, SI = spin_matrices()
 drift = SI["zz"]
 ctrl = jnp.stack((S["x"], S["y"]))
 U0 = jnp.eye(d, dtype=jnp.complex64)
-M = 5.0 # maximal control amplitude
+M = 1.0 # maximal control amplitude
 
 ###### CONTROL
 time_horizon = jnp.ones(1)
