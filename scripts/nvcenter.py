@@ -8,11 +8,17 @@ solve_fn = jax.jit(csys.solve_ocp)
 ######### SOLVE ##############
 ##############################
 init_control = (
-    0.30*2*jnp.pi*jnp.ones(1),
-    jax.random.normal(keys[10], su_dim)
+    0.1*jnp.ones(1),
+    jax.random.normal(keys[1], su_dim)
 )
 
 U1 = CNOT() # or random gate using: sampleSU(d, keys[50])
+U1 = jnp.array([
+        [0, 0, 1, 0],
+        [0, 1, 0, 0],
+        [1, 0, 0, 0],
+        [0, 0, 0, 1]
+    ], dtype=jnp.complex64)
 dynamic_p = U1
 
 control, losses, n_iter = solve_fn(init_control, dynamic_p)

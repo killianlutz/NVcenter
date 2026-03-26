@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from scipy.optimize import newton
 
 from jax.flatten_util import ravel_pytree
+from jax.scipy.linalg import expm
 from src._classes import ControlSystem
 from src._line_search import golden_section
 from src._quantum import *
@@ -31,6 +32,7 @@ def plot_results(csys:ControlSystem, control, dynamic_p, losses):
     axes[1].plot(ts, pulses[:, 0], c='b', label="$u_1(t)$", linewidth=3)
     axes[1].plot(ts, pulses[:, 1], c='r', label="$u_2(t)$", linewidth=3)
     axes[1].plot(ts, energy, linestyle='--', color='k', label="$|u(t)|$")
+    axes[1].plot(ts, 0*ts, color='k', linewidth=0.5)
     axes[1].set_title(f"Pulses | Gate time: {T[0]:.3f}")
     axes[1].set_xlabel(r"Time $t/T$")
     axes[1].grid(True)
@@ -47,11 +49,11 @@ def vector_field(U, t, p):
     Hc = static_p["system"]["ctrl"]
     su_basis = static_p["su_basis"]
 
-    T, g_vec = control
+    T, g_vec = control[0], control[1]
     g = vec_to_matrix(g_vec, su_basis)
-    g_conjugate_U = jnp.einsum('ij, jk, kl -> il', U, g, dagger(U))
+    g_conjugate_U = U @ g @ dagger(U)
 
-    expiH0 = jnp.exp(1j*t*T*H0)
+    expiH0 = expm(1j*t*T*H0)
     Hc_tilde = jax.vmap(lambda H: expiH0 @ H @ dagger(expiH0))(Hc)
     pulses = jax.vmap(
         lambda x, y: jnp.real(trace_dot(x, y)),
@@ -61,11 +63,17 @@ def vector_field(U, t, p):
     pulses_scaled = pulses * M/jnp.linalg.norm(pulses)
     control_hamiltonian = jnp.tensordot(pulses_scaled, Hc_tilde, axes=1)
 
-    return -1j * T * control_hamiltonian @ U
+    return (-1j * T) * control_hamiltonian @ U
 
 def loss_fn(x, p):
-    identity = p[-1]["system"]["initial_state"]
-    return infidelity(x, identity)
+    # classical infidelity
+    # identity = p[-1]["system"]["initial_state"]
+    # return infidelity(x, identity)
+
+    # allows local phases
+    x_diag = jnp.diag(x)
+    F = 0.25*jnp.square(jnp.linalg.norm(x_diag))
+    return jnp.abs(1 - F)
 
 def runge_kutta(f, x, t, p):
     h = p[-1]["integrator"]["h"]
@@ -134,9 +142,9 @@ static_p = {
         "vector_field": vector_field
     },
     "optimizer": {
-        "normalize_gradient": False,
+        "normalize_gradient": True,
         "regularization": 1e-3,
-        "n_max": 500,
+        "n_max": 200,
         "abstol_loss": 1e-6,
         "reltol_dist": 1e-5,
         "line_search": {

@@ -3,6 +3,7 @@ import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 from src._quantum import matrix_to_vec, vec_to_matrix, dagger, trace_dot, matrix_to_coeff, infidelity
 from scipy.integrate import solve_ivp
+from jax.scipy.linalg import expm
 import numpy as np
 
 @jax.tree_util.register_pytree_node_class
@@ -37,10 +38,10 @@ class ControlSystem:
         loss_fn = self.static_p["loss_fn"]
         H0 = self.static_p["system"]["drift"]
         T, U1 = control[0], dynamic_p
-        U1_moving = jnp.exp(1j*T*H0) @ U1
+        U1_moving = expm(1j*T*H0) @ U1
 
         U_final = self.final_state(control, dynamic_p)
-        return loss_fn(U_final @ dagger(U1_moving), (control, dynamic_p, self.static_p))
+        return loss_fn(dagger(U1_moving) @ U_final, (control, dynamic_p, self.static_p))
 
     def natural_gradient(self, control, dynamic_p):
         eps = self.static_p["optimizer"]["regularization"]
@@ -50,10 +51,10 @@ class ControlSystem:
             control = unravel(u_flat)
             H0 = self.static_p["system"]["drift"]
             T, U1 = control[0], p
-            U1_moving = jnp.exp(1j * H0 * T) @ U1
+            U1_moving = expm(1j*T*H0) @ U1
 
             U_vec = matrix_to_vec(
-                self.final_state(control, p) @ dagger(U1_moving),
+                dagger(U1_moving) @ self.final_state(control, p),
                 self.static_p["mat_basis"]
             )
             return U_vec, U_vec
@@ -160,17 +161,17 @@ class ControlSystem:
         ts = self.static_p["integrator"]["ts"]
         M = self.static_p["constraints"]["max_amplitude"]
 
-        T, g_vec = control
+        T, g_vec = control[0], control[1]
         g = vec_to_matrix(g_vec, self.static_p["su_basis"])
         Us = self.trajectory(control, dynamic_p)
 
         def pulse(Hj, y, t):
-            expiH0 = jnp.exp(1j * t * T * H0)
+            expiH0 = expm(1j*t*T*H0)
             Hj_tilde = expiH0 @ Hj @ dagger(expiH0)
             return jnp.real(trace_dot(Hj_tilde, y))
 
         def feedback(U, g, t):
-            g_conjugate_U = jnp.einsum('ij, jk, kl -> il', U, g, dagger(U))
+            g_conjugate_U = U @ g @ dagger(U)
             u = jax.vmap(pulse, in_axes=(0, None, None))(Hc, g_conjugate_U, t)
             scaling = M/jnp.linalg.norm(u)
             return u * scaling
@@ -195,13 +196,13 @@ class ControlSystem:
         ys = solve_ivp(ode_velocity, tspan, y0, **kwargs).y
 
         U_final = vec_to_matrix(ys[:, -1], mat_basis)
-        U1_moving = jnp.exp(1j * T * H0) @ U1
-        return loss_fn(U_final @ dagger(U1_moving), args)
+        U1_moving = expm(1j*T*H0) @ U1
+        return loss_fn(dagger(U1_moving) @ U_final, args)
 
     def save_to_npz(self, filename, control, dynamic_p):
         target = dynamic_p
         gate_time = control[0]
-        covector = control[-1]
+        covector = control[1]
         time_points = self.static_p["integrator"]["ts"]
         pulses = self.pulses(control, dynamic_p)
 
