@@ -1,9 +1,9 @@
 import jax
 import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
+
 from src._quantum import matrix_to_vec, vec_to_matrix, dagger, trace_dot, matrix_to_coeff, infidelity
 from scipy.integrate import solve_ivp
-from jax.scipy.linalg import expm
 import numpy as np
 
 @jax.tree_util.register_pytree_node_class
@@ -38,10 +38,9 @@ class ControlSystem:
         loss_fn = self.static_p["loss_fn"]
         H0 = self.static_p["system"]["drift"]
         T, U1 = control[0], dynamic_p
-        U1_moving = expm(1j*T*H0) @ U1
-
         U_final = self.final_state(control, dynamic_p)
-        return loss_fn(dagger(U1_moving) @ U_final, (control, dynamic_p, self.static_p))
+
+        return loss_fn(dagger(U1) @ U_final, (control, dynamic_p, self.static_p))
 
     def natural_gradient(self, control, dynamic_p):
         eps = self.static_p["optimizer"]["regularization"]
@@ -51,10 +50,8 @@ class ControlSystem:
             control = unravel(u_flat)
             H0 = self.static_p["system"]["drift"]
             T, U1 = control[0], p
-            U1_moving = expm(1j*T*H0) @ U1
-
             U_vec = matrix_to_vec(
-                dagger(U1_moving) @ self.final_state(control, p),
+                dagger(U1) @ self.final_state(control, p),
                 self.static_p["mat_basis"]
             )
             return U_vec, U_vec
@@ -74,7 +71,11 @@ class ControlSystem:
         flat_step = jnp.linalg.solve(A, b)
 
         normalize_gradient = self.static_p["optimizer"]["normalize_gradient"]
-        _flat_step = jax.lax.cond(normalize_gradient, lambda x: x/jnp.linalg.norm(x), lambda x: x, flat_step)
+        _flat_step = jax.lax.cond(
+            normalize_gradient,
+            lambda x: x/jnp.linalg.norm(x),
+            lambda x: x, flat_step
+        )
 
         return unravel(_flat_step), current_loss
 
@@ -152,27 +153,35 @@ class ControlSystem:
         losses, n_iter = val[-3:-1]
         return optimized_control, losses, n_iter
 
-    def pulses(self, control, dynamic_p):
+    def pulses_shape(self, control, dynamic_p):
         H0 = self.static_p["system"]["drift"]
         Hc = self.static_p["system"]["ctrl"]
-        ts = self.static_p["integrator"]["ts"]
-
         T, g_vec = control[0], control[1]
         g = vec_to_matrix(g_vec, self.static_p["su_basis"])
         Us = self.trajectory(control, dynamic_p)
 
-        def pulse(Hj, y, t):
-            expiH0 = expm(1j*t*T*H0)
-            Hj_tilde = expiH0 @ Hj @ dagger(expiH0)
-            return jnp.real(trace_dot(Hj_tilde, y))
-
-        def feedback(U, g, t):
+        def feedback(U, g):
             g_conjugate_U = U @ g @ dagger(U)
-            u = jax.vmap(pulse, in_axes=(0, None, None))(Hc, g_conjugate_U, t)
+            u = jax.vmap(
+                lambda Hj, y: jnp.real(trace_dot(Hj, y)),
+                in_axes=(0, None)
+            )(Hc, g_conjugate_U)
             scaling = 1/jnp.linalg.norm(u)
             return u * scaling
 
-        return jax.vmap(feedback, in_axes=(0, None, 0))(Us, g, ts)
+        return jax.vmap(feedback, in_axes=(0, None))(Us, g)
+
+    def pulses_amplitude(self, control, dynamic_p):
+        M = self.static_p["constraints"]["max_amplitude"]
+        ts = self.static_p["integrator"]["ts"]
+        network = self.static_p["system"]["network"]
+        weights = control[2]
+        return M*jax.vmap(network, (0, None))(ts, weights).reshape(-1)
+
+    def pulses(self, control, dynamic_p):
+        pulses_amplitude = self.pulses_amplitude(control, dynamic_p)
+        pulses_shape = self.pulses_shape(control, dynamic_p)
+        return jax.vmap(lambda x, y: x*y, (None, 1), 1)(pulses_amplitude, pulses_shape)
 
     def validate(self, control, dynamic_p, **kwargs):
         T = control[0]
@@ -187,22 +196,24 @@ class ControlSystem:
         def ode_velocity(t, y_vec):
             y = vec_to_matrix(y_vec, mat_basis)
             return matrix_to_vec(vector_field(y, t, args), mat_basis)
+
         tspan = (0.0, 1.0)
         y0 = np.asarray(matrix_to_vec(U0, mat_basis))
         ys = solve_ivp(ode_velocity, tspan, y0, **kwargs).y
 
         U_final = vec_to_matrix(ys[:, -1], mat_basis)
-        U1_moving = expm(1j*T*H0) @ U1
-        return loss_fn(dagger(U1_moving) @ U_final, args)
+        return loss_fn(dagger(U1) @ U_final, args)
 
     def save_to_npz(self, filename, control, dynamic_p):
         target = dynamic_p
         gate_time = control[0]
         covector = control[1]
+        pulses = self.pulses_shape(control, dynamic_p)
+        final_propagator = self.final_state(control, dynamic_p)
+        loss_after_optimizer = self.loss(control, dynamic_p)
         time_points = self.static_p["integrator"]["ts"]
-        pulses = self.pulses(control, dynamic_p)
 
-        jnp.savez(filename, target, gate_time, covector, time_points, pulses)
+        jnp.savez(filename, target, gate_time, covector, time_points, pulses, final_propagator, loss_after_optimizer)
 
     def tree_flatten(self):
         return (), self.static_p

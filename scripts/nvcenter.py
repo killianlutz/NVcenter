@@ -30,7 +30,7 @@ print(f"\n Iter: {n_iter} \n Loss: {losses[-1]:.1e} \n Gate time: {control[0][0]
 loss_check = csys.validate(control, dynamic_p, method='DOP853', max_step=1e-2)
 print(f"\n Loss validation: {loss_check:.1e}")
 
-csys.save_to_npz("./sims/OoA_10em0.npz", control, dynamic_p)
+csys.save_to_npz("./sims/example.npz", control, dynamic_p)
 
 ##############################
 ######### POST PROCESS #######

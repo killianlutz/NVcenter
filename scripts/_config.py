@@ -17,12 +17,6 @@ key = jax.random.PRNGKey(0)
 def plot_results(csys:ControlSystem, control, dynamic_p, losses):
     T = control[0]
     ts = csys.static_p["integrator"]["ts"]
-
-    M = csys.static_p["constraints"]["max_amplitude"]
-    weights = control[2]
-    network = csys.static_p["system"]["network"]
-
-    amplitude = M*jax.vmap(network, (0, None))(ts, weights).reshape(-1)
     pulses = csys.pulses(control, dynamic_p)  # g -> pulse
     energy = jnp.linalg.norm(pulses, axis=1)
 
@@ -36,9 +30,9 @@ def plot_results(csys:ControlSystem, control, dynamic_p, losses):
     axes[0].grid(True)
 
     # PULSES
-    axes[1].plot(ts, amplitude*pulses[:, 0], c='b', label="$u_1(t)$", linewidth=3)
-    axes[1].plot(ts, amplitude*pulses[:, 1], c='r', label="$u_2(t)$", linewidth=3)
-    axes[1].plot(ts, amplitude*energy, linestyle='--', color='k', label="$|u(t)|$")
+    axes[1].plot(ts, pulses[:, 0], c='b', label="$u_1(t)$", linewidth=3)
+    axes[1].plot(ts, pulses[:, 1], c='r', label="$u_2(t)$", linewidth=3)
+    axes[1].plot(ts, energy, linestyle='--', color='k', label="$|u(t)|$")
     axes[1].plot(ts, M*jnp.ones_like(ts), color='k', linewidth=0.75)
     axes[1].plot(ts, -M*jnp.ones_like(ts), color='k', linewidth=0.75)
     axes[1].plot(ts, 0*ts, color='k', linewidth=0.75)
@@ -71,17 +65,15 @@ def vector_field(U, t, p):
     g = vec_to_matrix(g_vec, su_basis)
     g_conjugate_U = U @ g @ dagger(U)
 
-    expiH0 = expm(1j*t*T*H0)
-    Hc_tilde = jax.vmap(lambda H: expiH0 @ H @ dagger(expiH0))(Hc)
     pulses = jax.vmap(
         lambda x, y: jnp.real(trace_dot(x, y)),
         in_axes=(0, None)
-    )(Hc_tilde, g_conjugate_U)
+    )(Hc, g_conjugate_U)
 
     pulses_scaled = pulses * 1/jnp.linalg.norm(pulses)
-    control_hamiltonian = jnp.tensordot(pulses_scaled, Hc_tilde, axes=1)
+    control_hamiltonian = jnp.tensordot(pulses_scaled, Hc, axes=1)
     a = network(t, weights)
-    return (-1j * T * a * M) * control_hamiltonian @ U
+    return (-1j * T) * (H0 + a*M*control_hamiltonian) @ U
 
 def loss_fn(x, p):
     # classical infidelity
@@ -113,8 +105,8 @@ S, I, SI = spin_matrices()
 drift = SI["zz"]
 ctrl = jnp.stack((S["x"], S["y"]))
 U0 = jnp.eye(d, dtype=jnp.complex64)
-M = 1.0 # maximal control amplitude
-neurons = jnp.array([1, 8, 8, 1])
+M = 10.0 # maximal control amplitude
+neurons = jnp.array([1, 8, 8, 1]) # = jnp.array([1]) for constant control amplitude
 
 ###### DYNAMIC ARGUMENTS
 U1 = sampleSU(d, keys[1]) # target
@@ -141,8 +133,7 @@ static_p = {
         "initial_state": U0,
         "drift": drift,
         "ctrl": ctrl,
-        "t_to_idx": lambda t: jnp.array(jnp.floor(t/h), dtype=int),
-        "network": network
+        "network": network if len(neurons) > 1 else lambda x, _: jnp.ones_like(x)
     },
     "integrator": {
         "h": h,
@@ -154,7 +145,7 @@ static_p = {
         "normalize_gradient": True,
         "regularization": 1e-3,
         "n_max": 100,
-        "abstol_loss": 1e-6,
+        "abstol_loss": 1e-4,
         "reltol_dist": 1e-4,
         "line_search": {
             "search_fn": golden_section, # signature (f, dynamic, static) -> step, val
