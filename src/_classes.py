@@ -80,11 +80,8 @@ class ControlSystem:
 
     def apply_update(self, control, direction, learning_rate):
         projector = self.static_p["projector"]
-        return jax.tree_util.tree_map(
-            lambda p, d, proj: proj(p, d, learning_rate),
-            control,
-            direction,
-            projector
+        return tuple(
+            proj(p, d, learning_rate) for (p, d, proj) in zip(control, direction, projector)
         )
 
     def line_search(self, control, dynamic_p, direction, reference_loss):
@@ -159,7 +156,6 @@ class ControlSystem:
         H0 = self.static_p["system"]["drift"]
         Hc = self.static_p["system"]["ctrl"]
         ts = self.static_p["integrator"]["ts"]
-        M = self.static_p["constraints"]["max_amplitude"]
 
         T, g_vec = control[0], control[1]
         g = vec_to_matrix(g_vec, self.static_p["su_basis"])
@@ -173,7 +169,7 @@ class ControlSystem:
         def feedback(U, g, t):
             g_conjugate_U = U @ g @ dagger(U)
             u = jax.vmap(pulse, in_axes=(0, None, None))(Hc, g_conjugate_U, t)
-            scaling = M/jnp.linalg.norm(u)
+            scaling = 1/jnp.linalg.norm(u)
             return u * scaling
 
         return jax.vmap(feedback, in_axes=(0, None, 0))(Us, g, ts)

@@ -1,4 +1,3 @@
-# _config.py contains the setup
 from scripts._config import *
 
 csys = ControlSystem(static_p)
@@ -8,11 +7,11 @@ solve_fn = jax.jit(csys.solve_ocp)
 ######### SOLVE ##############
 ##############################
 init_control = (
-    0.1*jnp.ones(1),
-    jax.random.normal(keys[1], su_dim)
+    0.1*2*jnp.pi*jnp.ones(1),
+    jax.random.normal(keys[1], su_dim),
+    rand_weights(keys[99], neurons)
 )
 
-U1 = CNOT() # or random gate using: sampleSU(d, keys[50])
 U1 = jnp.array([
         [0, 0, 1, 0],
         [0, 1, 0, 0],
@@ -23,7 +22,7 @@ dynamic_p = U1
 
 control, losses, n_iter = solve_fn(init_control, dynamic_p)
 losses = losses[:n_iter + 1] # not supported inside solve_fn (jit-compilation + n_iter dynamic)
-print(f"\n Iter: {n_iter} \n Loss: {losses[-1]:.1e} \n Gate time: {control[0][0]:.3f}")
+print(f"\n Iter: {n_iter} \n Loss: {losses[-1]:.1e} \n Gate time: {control[0][0]/(2*jnp.pi):.3f} (x 2pi)")
 
 ##############################
 #### VALIDATE AND SAVE #######
@@ -31,7 +30,8 @@ print(f"\n Iter: {n_iter} \n Loss: {losses[-1]:.1e} \n Gate time: {control[0][0]
 loss_check = csys.validate(control, dynamic_p, method='DOP853', max_step=1e-2)
 print(f"\n Loss validation: {loss_check:.1e}")
 
-csys.save_to_npz("./sims/example.npz", control, dynamic_p)
+csys.save_to_npz("./sims/OoA_10em0.npz", control, dynamic_p)
+
 ##############################
 ######### POST PROCESS #######
 ##############################
