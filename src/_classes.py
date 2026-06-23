@@ -80,7 +80,10 @@ class ControlSystem:
             linearized_model, U_vec = jax.jacobian(model, has_aux=True)(flat_control, dynamic_p)
             current_loss, grad_cost = jax.value_and_grad(cost)(U_vec, flat_control, dynamic_p)
 
-            A = lx.MatrixLinearOperator(linearized_model.T @ linearized_model + eps*jnp.eye(jnp.size(flat_control)))
+            A = lx.MatrixLinearOperator(
+                linearized_model.T @ linearized_model + eps*jnp.eye(jnp.size(flat_control)),
+                tags=lstq_p["tags"]
+            )
             b = -(linearized_model.T @ grad_cost)
             solver = lstq_p["direct_solver"]
 

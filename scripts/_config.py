@@ -175,8 +175,8 @@ static_p = {
             "n_max": 200
         },
         "least_squares": {
-            "regularization": 1e-2,
-            "is_iterative": True,
+            "regularization": 1e-3,
+            "is_iterative": False,
             "tags": (lx.positive_semidefinite_tag,),
             "iterative_solver": lx.CG(atol=1e-8, rtol=1e-3, max_steps=500),
             "direct_solver": lx.QR()
