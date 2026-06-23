@@ -139,10 +139,69 @@ def CNOT(standard):
             [0, 0, 1, 0],
             [0, 1, 0, 0]
         ], dtype=jnp.complex64)
-        # gate = jnp.array([
-        #     [0, 0, 1, 0],
-        #     [0, 1, 0, 0],
-        #     [1, 0, 0, 0],
-        #     [0, 0, 0, 1]
-        # ], dtype=jnp.complex64)
     return gate
+
+def conditional_gate(d, basis_vector_pairs):
+    G = jnp.eye(d, dtype=jnp.complex64)
+    for (set_to_zero, set_to_one) in zip(basis_vector_pairs, basis_vector_pairs):
+        for i in set_to_zero:
+            G = G.at[i, i].set(0)
+            for j in set_to_one:
+                if not(j == i):
+                    G = G.at[i, j].set(1)
+    return G
+
+def toffoli():
+    return electron_flip_conditional_nuclear([1, 2], 2)
+
+def electron_flip_conditional_nuclear(indices, n_nuclei):
+    # find where the i-th nuclear spin has state = 1 (i >= 1)
+    # basis ordering : |e n1 ... np > where electron and nuclei are qubits
+    indices = list(indices)
+    if list(filter(lambda x: (x < 1) or (x > n_nuclei), indices)):
+        raise ValueError("nuclear indices satisfy 1 <= i <= n_nuclei")
+
+    m = n_nuclei + 1
+    d = 2**m
+    labels = jnp.arange(0, 2**m)
+    state_is_active = []
+
+    for k in labels:
+        # binary digits representation of k with m digits
+        bits = list(map(int, bin(k)[2:]))
+        while len(bits) < m:
+            bits.insert(0, 0)
+
+        # check if the conditional nuclear spins are active
+        is_valid_state = True
+        for i in indices:
+            if not(bits[i] == 1):
+                is_valid_state = False
+                break
+
+        if is_valid_state:
+            state_is_active.append((k, bits))
+
+    # given two composite states labeled k1 and k2
+    # if their nuclear states are the same but their electronic state differs
+    # then we associate a pair (k1, k2) to flip the coefficients at these indices.
+    l = len(state_is_active)
+    basis_vector_pairs = []
+    for q in range(l):
+        for p in range(q + 1, l):
+            k1, bits1 = state_is_active[q]
+            k2, bits2 = state_is_active[p]
+            # take out the electronic state and compare binary decompositions
+            if bits1[1:] == bits2[1:]:
+                basis_vector_pairs.append([k1, k2])
+
+    return conditional_gate(d, basis_vector_pairs)
+
+def electron_flip(n_nuclei):
+    m = 2**n_nuclei # half of Hilbert space dimension
+    return jnp.block(
+        [
+            [jnp.zeros((m, m), dtype=jnp.complex64), jnp.eye(m)],
+            [jnp.eye(m), jnp.zeros((m, m))]
+        ]
+    )

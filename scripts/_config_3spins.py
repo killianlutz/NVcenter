@@ -2,6 +2,7 @@ import jax.numpy as jnp
 import jax
 import matplotlib.pyplot as plt
 import lineax as lx
+from functools import reduce
 
 from jax.flatten_util import ravel_pytree
 from src._classes import ControlSystem
@@ -11,6 +12,25 @@ from src._networks import *
 key = jax.random.PRNGKey(0)
 
 from scripts._user_fns import plot_results, runge_kutta, vector_field, loss_fn
+
+def model_parameters():
+    Id = jnp.eye(2, dtype=jnp.complex64)
+    P = jax.tree.map(lambda x: 0.5 * x, pauli_matrices())
+    Sx = reduce(jnp.kron, [P["x"], Id, Id])
+    Sy = reduce(jnp.kron, [P["y"], Id, Id])
+    Iz1 = reduce(jnp.kron, [Id, P["z"], Id])
+    Iz2 = reduce(jnp.kron, [Id, Id, P["z"]])
+    Ix1 = reduce(jnp.kron, [Id, P["x"], Id])
+    Ix2 = reduce(jnp.kron, [Id, Id, P["x"]])
+    SzIz1 = reduce(jnp.kron, [P["z"], P["z"], Id])
+    SzIz2 = reduce(jnp.kron, [P["z"], Id, P["z"]])
+    drift = (
+            A_parallel1 * SzIz1 + A_parallel2 * SzIz2
+            + omega_I1 * Iz1 + omega_I2 * Iz2
+    )
+    electronic_ctrl = jnp.stack((Sx, Sy))
+    nuclear_ctrl = Ix1[None, :, :] + Ix2[None, :, :]
+    return drift, electronic_ctrl, nuclear_ctrl
 
 ##############################
 ##### NUMERICAL SCHEME #######
@@ -28,14 +48,16 @@ h = ts[1] - ts[0]
 char_freq = 1e6 # MHz
 
 omega_S = 1e9/char_freq # zero-splitting
-omega_I = 1e-4*omega_S # zero-splitting
-A_parallel = 1e6/char_freq # hyperfine coupling
+omega_I1 = 1e-4*omega_S # zero-splitting: nuclear 1
+omega_I2 = 1e-3*omega_S # zero-splitting: nuclear 2
+A_parallel1 = 1e6/char_freq # hyperfine coupling: electron - nuclear 1
+A_parallel2 = 1e5/char_freq # hyperfine coupling: electron - nuclear 2
 Omega_R = 1e6/char_freq # Rabi frequency
 
 ##############################
 ##### CONTROL SYSTEM #########
 ##############################
-n_nuclei = 1 # nuclear spins
+n_nuclei = 2 # nuclear spins
 d = 2**(n_nuclei + 1) # electrons + nuclei
 su_dim = d**2 - 1
 keys = jax.random.split(key, 100)
@@ -43,17 +65,21 @@ mat_basis = basis(d)
 su_basis = subasis(d)
 S, I, SI = spin_matrices()
 U0 = jnp.eye(d, dtype=jnp.complex64)
-drift = A_parallel*SI["zz"] + omega_I*I["z"]
-electronic_ctrl = jnp.stack((S["x"], S["y"]))
-nuclear_ctrl = I["x"][None, :, :]
 
+drift, electronic_ctrl, nuclear_ctrl = model_parameters()
 ctrl = (electronic_ctrl, nuclear_ctrl)
-Ms = (1e0*Omega_R, 1e0*Omega_R) # maximal control amplitude
-neurons = (jnp.array([1, 8, 8, 1]), jnp.array([1, 8, 8, 1])) # = jnp.array([1]) for constant control amplitude
+Ms = (
+    1e1*Omega_R,
+    1e0*Omega_R
+) # maximal control amplitude
+neurons = (
+    jnp.array([1, 8, 8, 1]),
+    jnp.array([1, 8, 8, 1])
+) # = jnp.array([1]) for constant control amplitude
 networks = jax.tree.map(network_or_not, neurons)
 
 ###### DYNAMIC ARGUMENTS
-U1 = electron_flip_conditional_nuclear((1, ), n_nuclei)
+U1 = electron_flip_conditional_nuclear((1, 2), n_nuclei) # toffoli
 dynamic_p = {"target": U1, "drift": drift}
 
 ###### STATIC ARGUMENTS
