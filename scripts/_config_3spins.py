@@ -63,7 +63,6 @@ su_dim = d**2 - 1
 keys = jax.random.split(key, 100)
 mat_basis = basis(d)
 su_basis = subasis(d)
-S, I, SI = spin_matrices()
 U0 = jnp.eye(d, dtype=jnp.complex64)
 
 drift, electronic_ctrl, nuclear_ctrl = model_parameters()
@@ -118,7 +117,7 @@ static_p = {
         "reltol_dist": 1e-4,
         "line_search": {
             "search_fn": golden_section, # signature (f, dynamic, static) -> step, val
-            "log_interval": (-4.0, 0.0),
+            "log_interval": (-4.0, 1.0),
             "abstol": 1e-2,
             "n_max": 200
         },
