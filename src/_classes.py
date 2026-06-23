@@ -36,8 +36,7 @@ class ControlSystem:
 
     def loss(self, control, dynamic_p):
         loss_fn = self.static_p["loss_fn"]
-        H0 = self.static_p["system"]["drift"]
-        T, U1 = control[0], dynamic_p
+        T, U1, H0 = control[0], dynamic_p["target"], dynamic_p["drift"]
         U_final = self.final_state(control, dynamic_p)
 
         return loss_fn(dagger(U1) @ U_final, (control, dynamic_p, self.static_p))
@@ -48,8 +47,7 @@ class ControlSystem:
 
         def model(u_flat, p):
             control = unravel(u_flat)
-            H0 = self.static_p["system"]["drift"]
-            T, U1 = control[0], p
+            T, U1, H0 = control[0], p["target"], p["drift"]
             U_vec = matrix_to_vec(
                 dagger(U1) @ self.final_state(control, p),
                 self.static_p["mat_basis"]
@@ -154,40 +152,50 @@ class ControlSystem:
         return optimized_control, losses, n_iter
 
     def pulses_shape(self, control, dynamic_p):
-        H0 = self.static_p["system"]["drift"]
+        H0 = dynamic_p["drift"]
         Hc = self.static_p["system"]["ctrl"]
         T, g_vec = control[0], control[1]
         g = vec_to_matrix(g_vec, self.static_p["su_basis"])
         Us = self.trajectory(control, dynamic_p)
 
-        def feedback(U, g):
+        def feedback(U, g, H):
             g_conjugate_U = U @ g @ dagger(U)
             u = jax.vmap(
                 lambda Hj, y: jnp.real(trace_dot(Hj, y)),
                 in_axes=(0, None)
-            )(Hc, g_conjugate_U)
+            )(H, g_conjugate_U)
             scaling = 1/jnp.linalg.norm(u)
             return u * scaling
 
-        return jax.vmap(feedback, in_axes=(0, None))(Us, g)
+        return jax.tree.map(
+            lambda H: jax.vmap(feedback, in_axes=(0, None, None))(Us, g, H),
+            Hc
+        )
 
     def pulses_amplitude(self, control, dynamic_p):
-        M = self.static_p["constraints"]["max_amplitude"]
+        Ms = self.static_p["constraints"]["max_amplitude"]
         ts = self.static_p["integrator"]["ts"]
-        network = self.static_p["system"]["network"]
-        weights = control[2]
-        return M*jax.vmap(network, (0, None))(ts, weights).reshape(-1)
+        networks = self.static_p["system"]["network"]
+        weights = control[2:]
+
+        return jax.tree.map(
+            lambda M, network_fn, weight: M*jax.vmap(network_fn, (0, None))(ts, weight).reshape(-1),
+            Ms, networks, weights
+        )
 
     def pulses(self, control, dynamic_p):
         pulses_amplitude = self.pulses_amplitude(control, dynamic_p)
         pulses_shape = self.pulses_shape(control, dynamic_p)
-        return jax.vmap(lambda x, y: x*y, (None, 1), 1)(pulses_amplitude, pulses_shape)
+        fn = jax.vmap(lambda x, y: x*y, (None, 1), 1)
+        return jax.tree.map(lambda a, s: fn(a, s),
+            pulses_amplitude, pulses_shape
+        )
 
     def validate(self, control, dynamic_p, **kwargs):
         T = control[0]
-        U1 = dynamic_p
+        U1 = dynamic_p["target"]
         U0 = self.static_p["system"]["initial_state"]
-        H0 = self.static_p["system"]["drift"]
+        H0 = dynamic_p["drift"]
         loss_fn = self.static_p["loss_fn"]
         mat_basis = self.static_p["mat_basis"]
         vector_field = self.static_p["integrator"]["vector_field"]
@@ -208,12 +216,13 @@ class ControlSystem:
         target = dynamic_p
         gate_time = control[0]
         covector = control[1]
-        pulses = self.pulses_shape(control, dynamic_p)
+        weights = control[2:]
+        pulses = self.pulses(control, dynamic_p)
         final_propagator = self.final_state(control, dynamic_p)
         loss_after_optimizer = self.loss(control, dynamic_p)
         time_points = self.static_p["integrator"]["ts"]
 
-        jnp.savez(filename, target, gate_time, covector, time_points, pulses, final_propagator, loss_after_optimizer)
+        jnp.savez(filename, target, gate_time, covector, *pulses, time_points, final_propagator, loss_after_optimizer, *weights)
 
     def tree_flatten(self):
         return (), self.static_p

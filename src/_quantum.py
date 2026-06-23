@@ -122,12 +122,27 @@ def infidelity(x, y):
     fidelity = jnp.abs(trace_dot(x, y)) / dim
     return jnp.abs(1 - fidelity)
 
-def CNOT():
-    return toSU(
-        jnp.array([
+def CNOT(standard):
+    if standard:
+        gate = toSU(
+            jnp.array([
+                [1, 0, 0, 0],
+                [0, 1, 0, 0],
+                [0, 0, 0, 1],
+                [0, 0, 1, 0]
+            ], dtype=jnp.complex64)
+        )
+    else:
+        gate = jnp.array([
             [1, 0, 0, 0],
-            [0, 1, 0, 0],
             [0, 0, 0, 1],
-            [0, 0, 1, 0]
+            [0, 0, 1, 0],
+            [0, 1, 0, 0]
         ], dtype=jnp.complex64)
-    )
+        # gate = jnp.array([
+        #     [0, 0, 1, 0],
+        #     [0, 1, 0, 0],
+        #     [1, 0, 0, 0],
+        #     [0, 0, 0, 1]
+        # ], dtype=jnp.complex64)
+    return gate

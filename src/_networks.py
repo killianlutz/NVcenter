@@ -18,3 +18,6 @@ def network(t, weights):
         matrix, bias = params["w"], params["b"]
         x = jnp.tanh(matrix @ x + bias)
     return (x[0] + 1)*0.5
+
+def network_or_not(neurons):
+    return network if len(neurons) > 1 else lambda x, _: jnp.ones_like(x)
