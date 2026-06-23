@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 import jax
 import matplotlib.pyplot as plt
+import lineax as lx
 
 from jax.flatten_util import ravel_pytree
 from src._classes import ControlSystem
@@ -126,7 +127,7 @@ nuclear_ctrl = I["x"][None, :, :]
 
 ctrl = (electronic_ctrl, nuclear_ctrl)
 Ms = (1e0*Omega_R, 1e0*Omega_R) # maximal control amplitude
-neurons = (jnp.array([1, 6, 6, 1]), jnp.array([1, 4, 4, 1])) # = jnp.array([1]) for constant control amplitude
+neurons = (jnp.array([1, 8, 8, 1]), jnp.array([1, 8, 8, 1])) # = jnp.array([1]) for constant control amplitude
 networks = jax.tree.map(network_or_not, neurons)
 
 ###### DYNAMIC ARGUMENTS
@@ -164,7 +165,6 @@ static_p = {
     },
     "optimizer": {
         "normalize_gradient": True,
-        "regularization": 1e-3,
         "n_max": 100,
         "abstol_loss": 1e-6,
         "reltol_dist": 1e-4,
@@ -173,6 +173,13 @@ static_p = {
             "log_interval": (-4.0, 0.0),
             "abstol": 1e-2,
             "n_max": 200
+        },
+        "least_squares": {
+            "regularization": 1e-3,
+            "is_iterative": False,
+            "tags": (lx.positive_semidefinite_tag,),
+            "iterative_solver": lx.CG(atol=1e-4, rtol=1e-3, max_steps=200),
+            "direct_solver": lx.QR()
         }
     }
 }

@@ -14,8 +14,8 @@ dynamic_p = {"target": U1, "drift": drift}
 
 init_control = (
     0.1*2*jnp.pi*jnp.ones(1), # T
-    jax.random.normal(keys[1], su_dim), # g
-    rand_weights(keys[80], neurons[0]), # w -> u
+    jax.random.normal(keys[10], su_dim), # g
+    rand_weights(keys[70], neurons[0]), # w -> u
     rand_weights(keys[66], neurons[1]), # w -> v
 )
 
@@ -26,7 +26,7 @@ print(f"\n Iter: {n_iter} \n Loss: {losses[-1]:.1e} \n Gate time (scaled): {cont
 ##############################
 ######### POST PROCESS #######
 ##############################
-plot_results(csys, control, dynamic_p, losses, figsize=(16, 8))
+plot_results(csys, control, dynamic_p, losses, figsize=(16, 6))
 
 pulses = csys.pulses(control, dynamic_p)
 propagators = csys.trajectory(control, dynamic_p)

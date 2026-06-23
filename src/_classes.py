@@ -5,6 +5,7 @@ from jax.flatten_util import ravel_pytree
 from src._quantum import matrix_to_vec, vec_to_matrix, dagger, trace_dot, matrix_to_coeff, infidelity
 from scipy.integrate import solve_ivp
 import numpy as np
+import lineax as lx
 
 @jax.tree_util.register_pytree_node_class
 class ControlSystem:
@@ -42,7 +43,7 @@ class ControlSystem:
         return loss_fn(dagger(U1) @ U_final, (control, dynamic_p, self.static_p))
 
     def natural_gradient(self, control, dynamic_p):
-        eps = self.static_p["optimizer"]["regularization"]
+        lstq_p = self.static_p["optimizer"]["least_squares"]
         flat_control, unravel = ravel_pytree(control)
 
         def model(u_flat, p):
@@ -61,13 +62,29 @@ class ControlSystem:
                 (unravel(u_flat), p, self.static_p)
             )
 
-        linearized_model, U_vec = jax.jacobian(model, has_aux=True)(flat_control, dynamic_p)
-        current_loss, grad_cost = jax.value_and_grad(cost)(U_vec, flat_control, dynamic_p)
+        eps = lstq_p["regularization"]
+        if lstq_p["is_iterative"]:
+            partial_fn = lambda x: model(x, dynamic_p)[0]
+            U_vec, f_jvp = jax.linearize(partial_fn, flat_control)
+            _, f_vjp = jax.vjp(partial_fn, flat_control)
+            current_loss, grad_cost = jax.value_and_grad(cost)(U_vec, flat_control, dynamic_p)
+            def gram_mvp(x):
+                # Tikhonov least-squares operator (normal equations)
+                # Gram matrix calculated by combined vjp - jvp.
+                return f_vjp(f_jvp(x))[0] + eps*x
 
-        A = linearized_model.T @ linearized_model + eps*jnp.eye(jnp.size(flat_control))
-        b = -(linearized_model.T @ grad_cost)
-        flat_step = jnp.linalg.solve(A, b)
+            A = lx.FunctionLinearOperator(gram_mvp, flat_control, tags=lstq_p["tags"])
+            b = f_vjp(-grad_cost)[0]
+            solver = lstq_p["iterative_solver"]
+        else:
+            linearized_model, U_vec = jax.jacobian(model, has_aux=True)(flat_control, dynamic_p)
+            current_loss, grad_cost = jax.value_and_grad(cost)(U_vec, flat_control, dynamic_p)
 
+            A = lx.MatrixLinearOperator(linearized_model.T @ linearized_model + eps*jnp.eye(jnp.size(flat_control)))
+            b = -(linearized_model.T @ grad_cost)
+            solver = lstq_p["direct_solver"]
+
+        flat_step = lx.linear_solve(A, b, solver).value
         normalize_gradient = self.static_p["optimizer"]["normalize_gradient"]
         _flat_step = jax.lax.cond(
             normalize_gradient,
