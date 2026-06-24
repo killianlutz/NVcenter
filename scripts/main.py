@@ -2,9 +2,9 @@
 ################## CONTROL OF NV CENTERS ###################
 ############################################################
 # 2 spins:
-# from scripts._config import *
+from scripts._config import *
 # 3 spins:
-from scripts._config_3spins import *
+# from scripts._config_3spins import *
 
 csys = ControlSystem(static_p)
 solve_fn = jax.jit(csys.solve_ocp)
@@ -14,11 +14,12 @@ solve_fn = jax.jit(csys.solve_ocp)
 ##############################
 dynamic_p = {"target": U1, "drift": drift}
 
+K = jax.random.split(keys[0], 3)
 init_control = (
-    0.5*2*jnp.pi*jnp.ones(1), # T
-    jax.random.normal(keys[6], su_dim), # g
-    rand_weights(keys[2], neurons[0]), # w -> u
-    rand_weights(keys[3], neurons[1]), # w -> v
+    0.01*2*jnp.pi*jnp.ones(1), # T
+    jax.random.normal(K[0], su_dim), # g
+    rand_weights(K[1], neurons[0]), # w -> u
+    rand_weights(K[2], neurons[1]), # w -> v
 )
 
 control, losses, n_iter = solve_fn(init_control, dynamic_p)

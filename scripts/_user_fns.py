@@ -77,6 +77,8 @@ def vector_field(U, t, p):
     return (-1j * T) * (H0 + control_hamiltonian) @ U
 
 def loss_fn(x, p):
+    # second argument is p = (control, dynamic_p, static_p)
+
     # # classical infidelity
     # identity = p[-1]["system"]["initial_state"]
     # return infidelity(x, identity)

@@ -30,7 +30,8 @@ char_freq = 1e6 # MHz
 omega_S = 1e9/char_freq # zero-splitting
 omega_I = 1e-4*omega_S # zero-splitting
 A_parallel = 1e6/char_freq # hyperfine coupling
-Omega_R = 1e6/char_freq # Rabi frequency
+Omega_Re = 1e6/char_freq # Rabi frequency
+Omega_Rn = Omega_Re
 
 ##############################
 ##### CONTROL SYSTEM #########
@@ -43,17 +44,20 @@ mat_basis = basis(d)
 su_basis = subasis(d)
 S, I, SI = spin_matrices()
 U0 = jnp.eye(d, dtype=jnp.complex64)
-drift = A_parallel*SI["zz"] + omega_I*I["z"]
+drift = A_parallel*SI["zz"] #+ omega_I*I["z"]
 electronic_ctrl = jnp.stack((S["x"], S["y"]))
-nuclear_ctrl = I["x"][None, :, :]
+nuclear_ctrl = jnp.stack((I["x"], I["y"])) #I["x"][None, :, :]
 
 ctrl = (electronic_ctrl, nuclear_ctrl)
-Ms = (1e0*Omega_R, 1e0*Omega_R) # maximal control amplitude
-neurons = (jnp.array([1, 8, 8, 1]), jnp.array([1, 8, 8, 1])) # = jnp.array([1]) for constant control amplitude
+Ms = (1e1*Omega_Re, 1e1*Omega_Rn) # maximal control amplitude
+neurons = (
+    jnp.array([1, 8, 8, 1]),
+    jnp.array([1, 8, 8, 1])
+) # = jnp.array([1]) for constant control amplitude
 networks = jax.tree.map(network_or_not, neurons)
 
 ###### DYNAMIC ARGUMENTS
-U1 = electron_flip_conditional_nuclear((1, ), n_nuclei)
+U1 = electron_flip_conditional_nuclear((1, ), n_nuclei) # CNOT
 dynamic_p = {"target": U1, "drift": drift}
 
 ###### STATIC ARGUMENTS

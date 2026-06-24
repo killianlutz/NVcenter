@@ -13,23 +13,43 @@ key = jax.random.PRNGKey(0)
 
 from scripts._user_fns import plot_results, runge_kutta, vector_field, loss_fn
 
+# def model_parameters():
+#     Id = jnp.eye(2, dtype=jnp.complex64)
+#     P = jax.tree.map(lambda x: 0.5 * x, pauli_matrices())
+#     Sx = reduce(jnp.kron, [P["x"], Id, Id])
+#     Sy = reduce(jnp.kron, [P["y"], Id, Id])
+#     Iz1 = reduce(jnp.kron, [Id, P["z"], Id])
+#     Iz2 = reduce(jnp.kron, [Id, Id, P["z"]])
+#     Ix1 = reduce(jnp.kron, [Id, P["x"], Id])
+#     Ix2 = reduce(jnp.kron, [Id, Id, P["x"]])
+#     SzIz1 = reduce(jnp.kron, [P["z"], P["z"], Id])
+#     SzIz2 = reduce(jnp.kron, [P["z"], Id, P["z"]])
+#     drift = (
+#             A_parallel1 * SzIz1 + A_parallel2 * SzIz2
+#             + omega_I1 * Iz1 + omega_I2 * Iz2
+#     )
+#     electronic_ctrl = jnp.stack((Sx, Sy))
+#     nuclear_ctrl = Ix1[None, :, :] + Ix2[None, :, :]
+#     return drift, electronic_ctrl, nuclear_ctrl
+
 def model_parameters():
     Id = jnp.eye(2, dtype=jnp.complex64)
     P = jax.tree.map(lambda x: 0.5 * x, pauli_matrices())
     Sx = reduce(jnp.kron, [P["x"], Id, Id])
     Sy = reduce(jnp.kron, [P["y"], Id, Id])
-    Iz1 = reduce(jnp.kron, [Id, P["z"], Id])
-    Iz2 = reduce(jnp.kron, [Id, Id, P["z"]])
     Ix1 = reduce(jnp.kron, [Id, P["x"], Id])
     Ix2 = reduce(jnp.kron, [Id, Id, P["x"]])
+    Iy1 = reduce(jnp.kron, [Id, P["y"], Id])
+    Iy2 = reduce(jnp.kron, [Id, Id, P["y"]])
     SzIz1 = reduce(jnp.kron, [P["z"], P["z"], Id])
     SzIz2 = reduce(jnp.kron, [P["z"], Id, P["z"]])
-    drift = (
-            A_parallel1 * SzIz1 + A_parallel2 * SzIz2
-            + omega_I1 * Iz1 + omega_I2 * Iz2
-    )
+
+    drift = A_parallel1 * SzIz1 + A_parallel2 * SzIz2
     electronic_ctrl = jnp.stack((Sx, Sy))
-    nuclear_ctrl = Ix1[None, :, :] + Ix2[None, :, :]
+    nuclear_ctrl = jnp.stack((
+        Ix1 + Ix2,
+        Iy1 + Iy2
+    ))
     return drift, electronic_ctrl, nuclear_ctrl
 
 ##############################
@@ -49,10 +69,11 @@ char_freq = 1e6 # MHz
 
 omega_S = 1e9/char_freq # zero-splitting
 omega_I1 = 1e-4*omega_S # zero-splitting: nuclear 1
-omega_I2 = 1e-3*omega_S # zero-splitting: nuclear 2
+omega_I2 = omega_I1 # zero-splitting: nuclear 2
 A_parallel1 = 1e6/char_freq # hyperfine coupling: electron - nuclear 1
-A_parallel2 = 1e5/char_freq # hyperfine coupling: electron - nuclear 2
-Omega_R = 1e6/char_freq # Rabi frequency
+A_parallel2 = A_parallel1 # hyperfine coupling: electron - nuclear 2
+Omega_Re = 1e6/char_freq # Rabi frequency electronic control
+Omega_Rn = Omega_Re # Rabi frequency nuclear control
 
 ##############################
 ##### CONTROL SYSTEM #########
@@ -68,8 +89,8 @@ U0 = jnp.eye(d, dtype=jnp.complex64)
 drift, electronic_ctrl, nuclear_ctrl = model_parameters()
 ctrl = (electronic_ctrl, nuclear_ctrl)
 Ms = (
-    1e1*Omega_R,
-    1e0*Omega_R
+    1e1*Omega_Re,
+    1e1*Omega_Rn
 ) # maximal control amplitude
 neurons = (
     jnp.array([1, 8, 8, 1]),
@@ -117,7 +138,7 @@ static_p = {
         "reltol_dist": 1e-4,
         "line_search": {
             "search_fn": golden_section, # signature (f, dynamic, static) -> step, val
-            "log_interval": (-4.0, 1.0),
+            "log_interval": (-4.0, 0.0),
             "abstol": 1e-2,
             "n_max": 200
         },
