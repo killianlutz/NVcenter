@@ -21,3 +21,15 @@ def network(t, weights):
 
 def network_or_not(neurons):
     return network if len(neurons) > 1 else lambda x, _: jnp.ones_like(x)
+
+def piecewise_cst_interp(t, weights, n_pieces):
+    i = jnp.floor(t * n_pieces).astype(jnp.int16)
+    return weights[i]
+
+def normalize_if_not_zero(x, atol=1e-7):
+    l = jnp.linalg.norm(x)
+    return jax.lax.cond(l > atol, lambda y: y / l, lambda y: y, x)
+
+def proj_ball(x, r=1.0):
+    l = jnp.linalg.norm(x)
+    return jax.lax.cond(l > r, lambda y: r*y/l, lambda y: y, x)

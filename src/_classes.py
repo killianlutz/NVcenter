@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 
+from src._networks import normalize_if_not_zero
 from src._quantum import matrix_to_vec, vec_to_matrix, dagger, trace_dot, matrix_to_coeff, infidelity
 from scipy.integrate import solve_ivp
 import numpy as np
@@ -88,11 +89,13 @@ class ControlSystem:
             solver = lstq_p["direct_solver"]
 
         flat_step = lx.linear_solve(A, b, solver).value
+
         normalize_gradient = self.static_p["optimizer"]["normalize_gradient"]
         _flat_step = jax.lax.cond(
             normalize_gradient,
-            lambda x: x/jnp.linalg.norm(x),
-            lambda x: x, flat_step
+            normalize_if_not_zero,
+            lambda y: y,
+            flat_step
         )
 
         return unravel(_flat_step), current_loss
@@ -195,12 +198,12 @@ class ControlSystem:
     def pulses_amplitude(self, control, dynamic_p):
         Ms = self.static_p["constraints"]["max_amplitude"]
         ts = self.static_p["integrator"]["ts"]
-        networks = self.static_p["system"]["network"]
+        params_to_fns = self.static_p["system"]["params_to_fns"]
         weights = control[2:]
 
         return jax.tree.map(
-            lambda M, network_fn, weight: M*jax.vmap(network_fn, (0, None))(ts, weight).reshape(-1),
-            Ms, networks, weights
+            lambda M, params_to_fn, weight: M*jax.vmap(params_to_fn, (0, None))(ts, weight).reshape(-1),
+            Ms, params_to_fns, weights
         )
 
     def pulses(self, control, dynamic_p):

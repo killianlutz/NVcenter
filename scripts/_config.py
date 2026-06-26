@@ -1,23 +1,17 @@
-import jax.numpy as jnp
-import jax
-import matplotlib.pyplot as plt
 import lineax as lx
 
-from jax.flatten_util import ravel_pytree
-from src._classes import ControlSystem
 from src._line_search import golden_section
-from src._quantum import *
 from src._networks import *
 key = jax.random.PRNGKey(0)
+keys = jax.random.split(key, 100)
 
-from scripts._user_fns import plot_results, runge_kutta, vector_field, loss_fn
+from scripts._user_fns import *
 
 ##############################
-##### NUMERICAL SCHEME #######
+######## METHOD CHOICE #######
 ##############################
-n = 500
-ts = jnp.linspace(0.0, 1.0, n)
-h = ts[1] - ts[0]
+method = "GRAPE"
+# method = "MAGICARP"
 
 ##############################
 ##### PHYSICAL PARAMETERS ####
@@ -26,53 +20,47 @@ h = ts[1] - ts[0]
 #           t -> tau where tau = char_freq*t
 # Thus we optimize char_freq*T where T is the physical time (in seconds).
 char_freq = 1e6 # MHz
+n_nuclei = 1 # nuclear spins
 
 omega_S = 1e9/char_freq # zero-splitting
-omega_I = 1e-4*omega_S # zero-splitting
-A_parallel = 1e6/char_freq # hyperfine coupling
+omega_I = 1e-4*omega_S # zero-splitting: nuclear (same for every nuclei)
 Omega_Re = 1e6/char_freq # Rabi frequency
 Omega_Rn = Omega_Re
+A_parallels = jnp.array([1e6/char_freq for _ in range(n_nuclei)]) # hyperfine coupling for each nuclei
+
+Ms = (1e1*Omega_Re, 1e1*Omega_Rn) # maximal control amplitudes
+model = nvcenter_model(n_nuclei, A_parallels)
+target_gate = electron_flip_conditional_nuclear((1, ), n_nuclei) # electron flip conditional first nuclear spin
+
+
+##############################
+##### NUMERICAL SCHEME #######
+##############################
+n = 1_000
+ts = jnp.linspace(0.0, 1.0, n)
+h = ts[1] - ts[0]
 
 ##############################
 ##### CONTROL SYSTEM #########
 ##############################
-n_nuclei = 1 # nuclear spins
 d = 2**(n_nuclei + 1) # electrons + nuclei
 su_dim = d**2 - 1
-keys = jax.random.split(key, 100)
 mat_basis = basis(d)
 su_basis = subasis(d)
 S, I, SI = spin_matrices()
 U0 = jnp.eye(d, dtype=jnp.complex64)
-drift = A_parallel*SI["zz"] #+ omega_I*I["z"]
-electronic_ctrl = jnp.stack((S["x"], S["y"]))
-nuclear_ctrl = jnp.stack((I["x"], I["y"])) #I["x"][None, :, :]
-
-ctrl = (electronic_ctrl, nuclear_ctrl)
-Ms = (1e1*Omega_Re, 1e1*Omega_Rn) # maximal control amplitude
-neurons = (
-    jnp.array([1, 8, 8, 1]),
-    jnp.array([1, 8, 8, 1])
-) # = jnp.array([1]) for constant control amplitude
-networks = jax.tree.map(network_or_not, neurons)
+drift, ctrl = model[0], model[1:]
 
 ###### DYNAMIC ARGUMENTS
-U1 = electron_flip_conditional_nuclear((1, ), n_nuclei) # CNOT
+U1 = target_gate
 dynamic_p = {"target": U1, "drift": drift}
 
 ###### STATIC ARGUMENTS
-# same pytree structure as the control, one projector per control variable
-# if T must be constant, just set the corresponding projector to (lambda T, dT, lr: T)
-projector = (
-    lambda T, dT, lr: jnp.maximum(T + lr*dT, 0.0),
-    lambda g, dg, lr: g + lr*dg,
-    lambda w, dw, lr: jax.tree.map(lambda x, dx: x + lr * dx, w, dw),
-    lambda w, dw, lr: jax.tree.map(lambda x, dx: x + lr * dx, w, dw),
-)
-
+plot_results, vector_field, projector, params_to_fn = method_specific_fn(method)
+params_to_fns = jax.tree.map(lambda _: params_to_fn, ctrl)
 static_p = {
     "loss_fn": loss_fn,
-    "projector": projector,
+    "projector": projector(),
     "mat_basis": mat_basis,
     "su_basis": su_basis,
     "constraints": {
@@ -81,7 +69,7 @@ static_p = {
     "system": {
         "initial_state": U0,
         "ctrl": ctrl,
-        "network": networks,
+        "params_to_fns": params_to_fns,
     },
     "integrator": {
         "h": h,
@@ -92,8 +80,8 @@ static_p = {
     "optimizer": {
         "normalize_gradient": True,
         "n_max": 100,
-        "abstol_loss": 1e-6,
-        "reltol_dist": 1e-4,
+        "abstol_loss": 1e-7,
+        "reltol_dist": 1e-6,
         "line_search": {
             "search_fn": golden_section, # signature (f, dynamic, static) -> step, val
             "log_interval": (-4.0, 0.0),

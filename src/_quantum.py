@@ -2,12 +2,48 @@ import jax.numpy as jnp
 import jax
 import numpy as np
 import scipy.sparse as sparse
+from functools import reduce
 
 def pauli_matrices():
     sigma_x = jnp.array([[0, 1], [1, 0]], dtype=jnp.complex64)
     sigma_y = jnp.array([[0, -1j], [1j, 0]], dtype=jnp.complex64)
     sigma_z = jnp.array([[1, 0], [0, -1]], dtype=jnp.complex64)
     return {"x": sigma_x, "y": sigma_y, "z": sigma_z}
+
+def qubit_spin_operators():
+    return jax.tree.map(lambda x: 0.5 * x, pauli_matrices())
+
+def nvc_op(op, n_nuclei):
+    # nv center operatore: composite system with electron first (idx 0), nuclei then (1, 2, etc)
+    qubit_spin_ops = qubit_spin_operators()
+    alpha, j = list(op)
+
+    return reduce(
+        jnp.kron,
+        [qubit_spin_ops[alpha] if str(i) == j
+         else jnp.eye(2, dtype=jnp.complex64)
+         for i in range(n_nuclei + 1)]
+    )
+
+def nvcenter_model(n_nuclei, A_parallels):
+    # control operators assuming drift is linear combination of Sz and sum Izi
+    if not jnp.size(A_parallels) == n_nuclei:
+        raise ValueError("the size of the vector of couplings must match n_nuclei")
+
+    Sx = nvc_op("x0", n_nuclei)
+    Sy = nvc_op("y0", n_nuclei)
+    Ixi = [nvc_op("x" + str(1 + i), n_nuclei) for i in range(n_nuclei)]
+    Iyi = [nvc_op("y" + str(1 + i), n_nuclei) for i in range(n_nuclei)]
+    SzIzi = [A_par * nvc_op("z0", n_nuclei) @ nvc_op("z" + str(1 + i), n_nuclei) for (i, A_par) in enumerate(A_parallels)]
+
+    drift = jnp.sum(jnp.stack(SzIzi), axis=0)
+    electronic_ctrl = jnp.stack((Sx, Sy))
+    nuclear_ctrl = jnp.stack((
+        jnp.sum(jnp.stack(Ixi), axis=0),
+        jnp.sum(jnp.stack(Iyi), axis=0)
+    ))
+
+    return drift, electronic_ctrl, nuclear_ctrl
 
 def spin_matrices():
     pauli = pauli_matrices()
