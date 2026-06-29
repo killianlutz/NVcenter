@@ -6,14 +6,13 @@ from scripts._config import *
 ##############################
 ######## METHOD CHOICE #######
 ##############################
-# method = Grape
-method = Magicarp
+# csys = Grape(static_p)
+csys = Magicarp(static_p)
 
-csys = method(static_p)
 solve_fn = jax.jit(csys.solve_ocp)
 
-def initial_guess(method):
-    if isinstance(method, Magicarp):
+def initial_guess(control_system):
+    if isinstance(control_system, Magicarp):
         K = jax.random.split(keys[0], 3)
         T = 0.1 * 2 * jnp.pi * jnp.ones(1) # time horizon
         g = jax.random.normal(K[0], su_dim) # initial covector
@@ -21,20 +20,20 @@ def initial_guess(method):
         theta_v = rand_weights(K[2], jnp.array([1, 5, 5, 1])) # amplitude v
         return T, g, theta_u, theta_v
 
-    elif isinstance(csys, Grape):
+    elif isinstance(control_system, Grape):
         n_pieces = 10*(d + 1)
         T = 0.1 * 2 * jnp.pi * jnp.ones(1)  # time horizon
-        u = 1e-2 * jnp.ones((n_pieces, jnp.size(ctrl[0], 0))) # u
-        v = 1e-2 * jnp.ones((n_pieces, jnp.size(ctrl[1], 0))) # v
+        u = 1e-3 * jnp.ones((n_pieces, jnp.size(ctrl[0], 0))) # u
+        v = 1e-3 * jnp.ones((n_pieces, jnp.size(ctrl[1], 0))) # v
         return T, u, v
 
     else:
-        raise ValueError("only available methods: Magicarp, Grape")
+        raise ValueError("only available systems: Magicarp, Grape")
 
 ##############################
 ######### SOLVE ##############
 ##############################
-init_control = initial_guess(method)
+init_control = initial_guess(csys)
 dynamic_p = {"target": U1, "drift": drift}
 control, losses, n_iter = solve_fn(init_control, dynamic_p)
 losses = losses[:n_iter + 1] # not supported inside solve_fn (jit-compilation + n_iter dynamic)
@@ -58,4 +57,5 @@ time_pulse_fns_pair = (control[0], csys.pulse_fns(control, dynamic_p))
 loss_check_concrete = csys.validate_concrete_pulses(time_pulse_fns_pair, dynamic_p)
 print(f"\n Loss validation: \n Direct: {loss_check:.1e} \n Concrete pulses: {loss_check_concrete:.1e}")
 
-csys.save_to_npz("./sims/example.npz", control, dynamic_p)
+filename = "./sims/magicarp.npz" if isinstance(csys, Magicarp) else "./sims/grape.npz"
+csys.save_to_npz(filename, control, dynamic_p)
