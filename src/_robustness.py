@@ -3,12 +3,14 @@ from diffrax import diffeqsolve, ODETerm, Dopri8, PIDController
 import jax.numpy as jnp
 import jax
 
+
+def zoh(weights):
+    # zeroth order hold
+    n_pieces = jnp.size(weights, 0)
+    return lambda t: piecewise_cst_interp(t, weights, n_pieces)
+
 def pulse_fns(pulses):
     # take discrete pulses and identify them to piecewise constant functions
-    def zoh(weights):
-        n_pieces = jnp.size(weights, 0)
-        return lambda t: piecewise_cst_interp(t, weights, n_pieces)
-
     return jax.tree.map(zoh, pulses)
 
 def robustness(time_pulse_fns_pair, hamiltonians, dt0=1e-1, solver=Dopri8(),
