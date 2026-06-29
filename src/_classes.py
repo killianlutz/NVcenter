@@ -171,19 +171,19 @@ class ControlSystem:
         losses, n_iter = val[-3:-1]
         return optimized_control, losses, n_iter
 
-    def pulses_shape(self, control, dynamic_p):
-        pass
+    # def pulses_shape(self, control, dynamic_p):
+    #     pass
+    #
+    # def pulses_amplitude(self, control, dynamic_p):
+    #     pass
 
-    def pulses_amplitude(self, control, dynamic_p):
-        pass
-
-    def pulses(self, control, dynamic_p):
-        pulses_amplitude = self.pulses_amplitude(control, dynamic_p)
-        pulses_shape = self.pulses_shape(control, dynamic_p)
-        fn = jax.vmap(lambda x, y: x*y, (None, 1), 1)
-        return jax.tree.map(lambda a, s: fn(a, s),
-            pulses_amplitude, pulses_shape
-        )
+    # def pulses(self, control, dynamic_p):
+    #     pulses_amplitude = self.pulses_amplitude(control, dynamic_p)
+    #     pulses_shape = self.pulses_shape(control, dynamic_p)
+    #     fn = jax.vmap(lambda x, y: x*y, (None, 1), 1)
+    #     return jax.tree.map(lambda a, s: fn(a, s),
+    #         pulses_amplitude, pulses_shape
+    #     )
 
     def validate(self, control, dynamic_p, dt0=1e-1, solver=Dopri8(), stepsize_controller=PIDController(atol=1e-7, rtol=1e-5), **kwargs):
         U0 = self.static_p["system"]["initial_state"]
@@ -271,14 +271,38 @@ class ControlSystem:
         fig.show()
 
     def vector_field(self, U, t, p):
-        pass
+        control, dynamic_p, static_p = p
+        H0 = dynamic_p["drift"]
+        Hc = static_p["system"]["ctrl"]
+
+        pulses = self.params_to_pulses(t, control, dynamic_p, U)
+        control_hamiltonian = jnp.sum(
+            jnp.stack(
+                jax.tree.map(
+                    lambda x, y: jnp.tensordot(x, y, axes=1), pulses, Hc
+                )
+            ),
+            axis=0
+        )
+        return -1j * (H0 + control_hamiltonian) @ U
 
     def projector(self):
         pass
 
     def params_to_pulses(self, t, weights):
         pass
-    
+
+    def pulses(self, control, dynamic_p):
+        ts = self.static_p["integrator"]["ts"]
+        Us = self.trajectory(control, dynamic_p)
+        control_pulses = jax.vmap(
+                lambda t, U: jnp.array(self.params_to_pulses(t, control, dynamic_p, U)),
+                in_axes=(0, 0),
+                out_axes=1
+        )(ts, Us)
+
+        return tuple(control_pulses)
+
     def tree_flatten(self):
         return (), self.static_p
 

@@ -37,33 +37,38 @@ class Magicarp(ControlSystem):
     def __init__(self, static_parameters):
         super().__init__(static_parameters)
 
+    # def vector_field(self, U, t, p):
+    #     control, dynamic_p, static_p = p
+    #     Ms = static_p["constraints"]["max_amplitude"]
+    #     H0 = dynamic_p["drift"]
+    #     Hc = static_p["system"]["ctrl"]
+    #     su_basis = static_p["su_basis"]
+    #
+    #     T, g_vec, weights = control[0], control[1], control[2:]
+    #     g = vec_to_matrix(g_vec, su_basis)
+    #     g_conjugate_U = U @ g @ dagger(U)
+    #
+    #     def pulses_fn(H, M, weight):
+    #         pulses = jax.vmap(
+    #             lambda x, y: jnp.real(trace_dot(x, y)),
+    #             in_axes=(0, None)
+    #         )(H, g_conjugate_U)
+    #         pulses_scaled = pulses / jnp.linalg.norm(pulses)
+    #         control_hamiltonian = jnp.tensordot(pulses_scaled, H, axes=1)
+    #         amplitude = self.params_to_pulses(t, weight)
+    #         return M * amplitude * control_hamiltonian
+    #
+    #     control_hamiltonian = jnp.sum(
+    #         jnp.stack(jax.tree.map(pulses_fn, Hc, Ms, weights)),
+    #         axis=0
+    #     )
+    #
+    #     return (-1j * T) * (H0 + control_hamiltonian) @ U
     def vector_field(self, U, t, p):
         control, dynamic_p, static_p = p
-        Ms = static_p["constraints"]["max_amplitude"]
-        H0 = dynamic_p["drift"]
-        Hc = static_p["system"]["ctrl"]
-        su_basis = static_p["su_basis"]
+        T = control[0]
+        return T*super().vector_field(U, t, p)
 
-        T, g_vec, weights = control[0], control[1], control[2:]
-        g = vec_to_matrix(g_vec, su_basis)
-        g_conjugate_U = U @ g @ dagger(U)
-
-        def pulses_fn(H, M, weight):
-            pulses = jax.vmap(
-                lambda x, y: jnp.real(trace_dot(x, y)),
-                in_axes=(0, None)
-            )(H, g_conjugate_U)
-            pulses_scaled = pulses / jnp.linalg.norm(pulses)
-            control_hamiltonian = jnp.tensordot(pulses_scaled, H, axes=1)
-            amplitude = self.params_to_pulses(t, weight)
-            return M * amplitude * control_hamiltonian
-
-        control_hamiltonian = jnp.sum(
-            jnp.stack(jax.tree.map(pulses_fn, Hc, Ms, weights)),
-            axis=0
-        )
-
-        return (-1j * T) * (H0 + control_hamiltonian) @ U
 
     def projector(self):
         # same pytree structure as the control, one projector per control variable
@@ -75,51 +80,32 @@ class Magicarp(ControlSystem):
             lambda w, dw, lr: jax.tree.map(lambda x, dx: x + lr * dx, w, dw)
         )
 
-    def params_to_pulses(self, t, weights):
-        return network(t, weights)
-
-    def pulses_shape(self, control, dynamic_p):
-        H0 = dynamic_p["drift"]
+    def params_to_pulses(self, t, control, dynamic_p, U):
         Hc = self.static_p["system"]["ctrl"]
-        T, g_vec = control[0], control[1]
-        g = vec_to_matrix(g_vec, self.static_p["su_basis"])
-        Us = self.trajectory(control, dynamic_p)
+        Ms = self.static_p["constraints"]["max_amplitude"]
+        g_vec, weights = control[1], control[2:]
 
-        def feedback(U, g, H):
-            g_conjugate_U = U @ g @ dagger(U)
-            u = jax.vmap(
-                lambda Hj, y: jnp.real(trace_dot(Hj, y)),
+        g = vec_to_matrix(g_vec, self.static_p["su_basis"])
+        g_conjugate_U = U @ g @ dagger(U)
+
+        def pulses_fn(H, M, weight):
+            pulses = jax.vmap(
+                lambda x, y: jnp.real(trace_dot(x, y)),
                 in_axes=(0, None)
             )(H, g_conjugate_U)
-            return u/jnp.linalg.norm(u)
+            amplitude = network(t, weight)
+            return M * amplitude * normalize_if_not_zero(pulses)
 
-        return jax.tree.map(
-            lambda H: jax.vmap(feedback, in_axes=(0, None, None))(Us, g, H),
-            Hc
-        )
-
-    def pulses_amplitude(self, control, dynamic_p):
-        Ms = self.static_p["constraints"]["max_amplitude"]
-        ts = self.static_p["integrator"]["ts"]
-        weights = control[-2:]
-
-        return jax.tree.map(
-            lambda M, weight: M*jax.vmap(self.params_to_pulses, (0, None))(ts, weight).reshape(-1),
-            Ms, weights
-        )
+        return jax.tree.map(pulses_fn, Hc, Ms, weights)
 
     def save_to_npz(self, filename, control, dynamic_p):
-        target = dynamic_p
-        gate_time = control[0]
+        target = dynamic_p["target"]
         pulses = self.pulses(control, dynamic_p)
         final_propagator = self.final_state(control, dynamic_p)
         loss_after_optimizer = self.loss(control, dynamic_p)
         time_points = self.static_p["integrator"]["ts"]
 
-        covector = control[1]
-        weights = control[2:]
-
-        jnp.savez(filename, U1=target, T=gate_time, u=pulses[0], v=pulses[1], ts=time_points, U_final=final_propagator, loss=loss_after_optimizer, g=covector, u_weights=control[2], v_weights=control[3])
+        jnp.savez(filename, U1=target, T=control[0], u=pulses[0], v=pulses[1], ts=time_points, U_final=final_propagator, loss=loss_after_optimizer, g=control[1], u_weights=control[2], v_weights=control[3])
 
 ###############################
 ########## GRAPE ##############
@@ -130,23 +116,8 @@ class Grape(ControlSystem):
 
     def vector_field(self, U, t, p):
         control, dynamic_p, static_p = p
-        Ms = self.static_p["constraints"]["max_amplitude"]
-        H0 = dynamic_p["drift"]
-        Hc = self.static_p["system"]["ctrl"]
-
-        T, weights = control[0], control[1:]
-
-        def pulses_fn(H, M, weight):
-            pulses = self.params_to_pulses(t, weight)
-            control_hamiltonian = jnp.tensordot(pulses, H, axes=1)
-            return M * control_hamiltonian
-
-        control_hamiltonian = jnp.sum(
-            jnp.stack(jax.tree.map(pulses_fn, Hc, Ms, weights)),
-            axis=0
-        )
-
-        return (-1j * T) * (H0 + control_hamiltonian) @ U
+        T = control[0]
+        return T*super().vector_field(U, t, p)
 
     def projector(self):
         return (
@@ -155,45 +126,21 @@ class Grape(ControlSystem):
         lambda v, dv, lr: v + lr*dv
     )
 
-    def params_to_pulses(self, t, weights):
-        n_pieces = jnp.size(weights, 0)
-        return proj_ball(piecewise_cst_interp(t, weights, n_pieces))
-
-    def pulses_shape(self, control, dynamic_p):
-        H0 = dynamic_p["drift"]
-        Hc = self.static_p["system"]["ctrl"]
-        ts = self.static_p["integrator"]["ts"]
-
-        def fn(weight):
-            return jax.vmap(
-                lambda t, w: normalize_if_not_zero(self.params_to_pulses(t, w)),
-                in_axes=(0, None)
-            )(ts, weight)
-
-        return jax.tree.map(fn, control[1:])
-
-    def pulses_amplitude(self, control, dynamic_p):
-        H0 = dynamic_p["drift"]
-        Hc = self.static_p["system"]["ctrl"]
+    def params_to_pulses(self, t, control, dynamic_p, U):
         Ms = self.static_p["constraints"]["max_amplitude"]
-        ts = self.static_p["integrator"]["ts"]
+        weights = control[-2:]
 
-        def fn(M, weight):
-            return jax.vmap(
-                lambda t, w: M*jnp.linalg.norm(self.params_to_pulses(t, w)),
-                in_axes=(0, None)
-            )(ts, weight)
+        def pulses_fn(M, weight):
+            n_pieces = jnp.size(weight, 0)
+            return M*proj_ball(piecewise_cst_interp(t, weight, n_pieces))
 
-        return jax.tree.map(fn, Ms, control[-2:])
+        return jax.tree.map(pulses_fn, Ms, weights)
 
     def save_to_npz(self, filename, control, dynamic_p):
-        target = dynamic_p
-        gate_time = control[0]
+        target = dynamic_p["target"]
         pulses = self.pulses(control, dynamic_p)
         final_propagator = self.final_state(control, dynamic_p)
         loss_after_optimizer = self.loss(control, dynamic_p)
         time_points = self.static_p["integrator"]["ts"]
 
-        weights = control[2:]
-
-        jnp.savez(filename, U1=target, T=gate_time, u=pulses[0], v=pulses[1], ts=time_points, U_final=final_propagator, loss=loss_after_optimizer, u_weights=control[2], v_weights=control[3])
+        jnp.savez(filename, U1=target, T=control[0], u=pulses[0], v=pulses[1], ts=time_points, U_final=final_propagator, loss=loss_after_optimizer, u_weights=control[1], v_weights=control[2])
