@@ -8,12 +8,6 @@ keys = jax.random.split(key, 100)
 from scripts._user_fns import *
 
 ##############################
-######## METHOD CHOICE #######
-##############################
-# method = "grape"
-method = "magicarp"
-
-##############################
 ##### PHYSICAL PARAMETERS ####
 ##############################
 # We rescale the time variable by the characteristic (angular) frequency:

@@ -2,25 +2,34 @@
 ################## CONTROL OF NV CENTERS ###################
 ############################################################
 from scripts._config import *
-csys = Magicarp(static_p) if method == "magicarp" else Grape(static_p)
+
+##############################
+######## METHOD CHOICE #######
+##############################
+# method = Grape
+method = Magicarp
+
+csys = method(static_p)
 solve_fn = jax.jit(csys.solve_ocp)
 
 def initial_guess(method):
-    if method == "magicarp":
+    if isinstance(method, Magicarp):
         K = jax.random.split(keys[0], 3)
         T = 0.1 * 2 * jnp.pi * jnp.ones(1) # time horizon
         g = jax.random.normal(K[0], su_dim) # initial covector
         theta_u = rand_weights(K[1], jnp.array([1, 5, 5, 1])) # amplitude u
         theta_v = rand_weights(K[2], jnp.array([1, 5, 5, 1])) # amplitude v
         return T, g, theta_u, theta_v
-    elif method == "grape":
+
+    elif isinstance(csys, Grape):
         n_pieces = 10*(d + 1)
         T = 0.1 * 2 * jnp.pi * jnp.ones(1)  # time horizon
         u = 1e-2 * jnp.ones((n_pieces, jnp.size(ctrl[0], 0))) # u
         v = 1e-2 * jnp.ones((n_pieces, jnp.size(ctrl[1], 0))) # v
         return T, u, v
+
     else:
-        raise ValueError("only available methods: magicarp, grape")
+        raise ValueError("only available methods: Magicarp, Grape")
 
 ##############################
 ######### SOLVE ##############
