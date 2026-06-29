@@ -45,16 +45,6 @@ def nvcenter_model(n_nuclei, A_parallels):
 
     return drift, electronic_ctrl, nuclear_ctrl
 
-def spin_matrices():
-    pauli = pauli_matrices()
-    keys = pauli.keys()
-    Id = jnp.eye(2)
-    S = {key: jnp.kron(0.5*sigma, Id) for key, sigma in zip(keys, pauli.values())}
-    I = {key: jnp.kron(Id, 0.5*sigma) for key, sigma in zip(keys, pauli.values())}
-    SI = {key1+key2: jnp.kron(0.5*pauli[key1], 0.5*pauli[key2]) for key1 in keys for key2 in keys}
-
-    return S, I, SI
-
 def basis(dim):
     B = []
     for i in range(dim):
@@ -241,3 +231,17 @@ def electron_flip(n_nuclei):
             [jnp.eye(m), jnp.zeros((m, m))]
         ]
     )
+
+def vector_field_schrodinger(t, U, p):
+    H0, Hc, time_horizon, pulse_fns = p
+
+    def control_term(H, pulse_fn):
+        pulses = pulse_fn(t)
+        return jnp.tensordot(pulses, H, axes=1)
+
+    control_hamiltonian = jnp.sum(
+        jnp.stack(jax.tree.map(control_term, Hc, pulse_fns)),
+        axis=0
+    )
+
+    return (-1j * time_horizon) * (H0 + control_hamiltonian) @ U

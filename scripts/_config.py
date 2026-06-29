@@ -10,8 +10,8 @@ from scripts._user_fns import *
 ##############################
 ######## METHOD CHOICE #######
 ##############################
-method = "GRAPE"
-# method = "MAGICARP"
+# method = "grape"
+method = "magicarp"
 
 ##############################
 ##### PHYSICAL PARAMETERS ####
@@ -47,7 +47,6 @@ d = 2**(n_nuclei + 1) # electrons + nuclei
 su_dim = d**2 - 1
 mat_basis = basis(d)
 su_basis = subasis(d)
-S, I, SI = spin_matrices()
 U0 = jnp.eye(d, dtype=jnp.complex64)
 drift, ctrl = model[0], model[1:]
 
@@ -56,11 +55,8 @@ U1 = target_gate
 dynamic_p = {"target": U1, "drift": drift}
 
 ###### STATIC ARGUMENTS
-plot_results, vector_field, projector, params_to_fn = method_specific_fn(method)
-params_to_fns = jax.tree.map(lambda _: params_to_fn, ctrl)
 static_p = {
     "loss_fn": loss_fn,
-    "projector": projector(),
     "mat_basis": mat_basis,
     "su_basis": su_basis,
     "constraints": {
@@ -68,14 +64,12 @@ static_p = {
     },
     "system": {
         "initial_state": U0,
-        "ctrl": ctrl,
-        "params_to_fns": params_to_fns,
+        "ctrl": ctrl
     },
     "integrator": {
         "h": h,
         "ts": ts,
-        "scheme": runge_kutta,
-        "vector_field": vector_field
+        "scheme": runge_kutta
     },
     "optimizer": {
         "normalize_gradient": True,

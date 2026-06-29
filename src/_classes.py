@@ -2,11 +2,12 @@ import jax
 import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 
-from src._networks import normalize_if_not_zero
-from src._quantum import matrix_to_vec, vec_to_matrix, dagger, trace_dot, matrix_to_coeff, infidelity
-from scipy.integrate import solve_ivp
-import numpy as np
+import matplotlib.pyplot as plt
+from src._networks import normalize_if_not_zero, piecewise_cst_interp, proj_ball, network
+from src._quantum import matrix_to_vec, vec_to_matrix, dagger, trace_dot, vector_field_schrodinger
+from diffrax import diffeqsolve, ODETerm, Dopri8, PIDController
 import lineax as lx
+
 
 @jax.tree_util.register_pytree_node_class
 class ControlSystem:
@@ -18,17 +19,14 @@ class ControlSystem:
 
     def trajectory(self, control, dynamic_p):
         p = self.static_p["integrator"]
-        h = p["h"]
         ts = p["ts"]
         scheme = p["scheme"]
-        f = p["vector_field"]
-
         x0 = self.static_p["system"]["initial_state"]
 
         # close over static parameters with e.g. Python functions
         def one_step(carry, _):
             x, i = carry
-            y = scheme(f, x, ts[i], (control, dynamic_p, self.static_p))
+            y = scheme(self.vector_field, x, ts[i], (control, dynamic_p, self.static_p))
             return (y, i + 1), y
 
         carry = (x0, 0) # only dynamic variables (jax traceable) inside carry
@@ -101,9 +99,8 @@ class ControlSystem:
         return unravel(_flat_step), current_loss
 
     def apply_update(self, control, direction, learning_rate):
-        projector = self.static_p["projector"]
         return tuple(
-            proj(p, d, learning_rate) for (p, d, proj) in zip(control, direction, projector)
+            proj(p, d, learning_rate) for (p, d, proj) in zip(control, direction, self.projector())
         )
 
     def line_search(self, control, dynamic_p, direction, reference_loss):
@@ -175,36 +172,10 @@ class ControlSystem:
         return optimized_control, losses, n_iter
 
     def pulses_shape(self, control, dynamic_p):
-        H0 = dynamic_p["drift"]
-        Hc = self.static_p["system"]["ctrl"]
-        T, g_vec = control[0], control[1]
-        g = vec_to_matrix(g_vec, self.static_p["su_basis"])
-        Us = self.trajectory(control, dynamic_p)
-
-        def feedback(U, g, H):
-            g_conjugate_U = U @ g @ dagger(U)
-            u = jax.vmap(
-                lambda Hj, y: jnp.real(trace_dot(Hj, y)),
-                in_axes=(0, None)
-            )(H, g_conjugate_U)
-            scaling = 1/jnp.linalg.norm(u)
-            return u * scaling
-
-        return jax.tree.map(
-            lambda H: jax.vmap(feedback, in_axes=(0, None, None))(Us, g, H),
-            Hc
-        )
+        pass
 
     def pulses_amplitude(self, control, dynamic_p):
-        Ms = self.static_p["constraints"]["max_amplitude"]
-        ts = self.static_p["integrator"]["ts"]
-        params_to_fns = self.static_p["system"]["params_to_fns"]
-        weights = control[2:]
-
-        return jax.tree.map(
-            lambda M, params_to_fn, weight: M*jax.vmap(params_to_fn, (0, None))(ts, weight).reshape(-1),
-            Ms, params_to_fns, weights
-        )
+        pass
 
     def pulses(self, control, dynamic_p):
         pulses_amplitude = self.pulses_amplitude(control, dynamic_p)
@@ -214,39 +185,100 @@ class ControlSystem:
             pulses_amplitude, pulses_shape
         )
 
-    def validate(self, control, dynamic_p, **kwargs):
-        T = control[0]
-        U1 = dynamic_p["target"]
+    def validate(self, control, dynamic_p, dt0=1e-1, solver=Dopri8(), stepsize_controller=PIDController(atol=1e-7, rtol=1e-5), **kwargs):
         U0 = self.static_p["system"]["initial_state"]
-        H0 = dynamic_p["drift"]
-        loss_fn = self.static_p["loss_fn"]
-        mat_basis = self.static_p["mat_basis"]
-        vector_field = self.static_p["integrator"]["vector_field"]
-
         args = (control, dynamic_p, self.static_p)
-        def ode_velocity(t, y_vec):
-            y = vec_to_matrix(y_vec, mat_basis)
-            return matrix_to_vec(vector_field(y, t, args), mat_basis)
 
-        tspan = (0.0, 1.0)
-        y0 = np.asarray(matrix_to_vec(U0, mat_basis))
-        ys = solve_ivp(ode_velocity, tspan, y0, **kwargs).y
+        U_final = diffeqsolve(
+            ODETerm(lambda t, U, args: self.vector_field(U, t, args)),
+            t0=0.0, t1=1.0, dt0=dt0,
+            y0=U0,
+            args=args,
+            solver=solver,
+            stepsize_controller=stepsize_controller,
+            **kwargs
+        ).ys[0, ...]
 
-        U_final = vec_to_matrix(ys[:, -1], mat_basis)
+        loss_fn = self.static_p["loss_fn"]
+        U1 = dynamic_p["target"]
         return loss_fn(dagger(U1) @ U_final, args)
 
     def save_to_npz(self, filename, control, dynamic_p):
         target = dynamic_p
         gate_time = control[0]
-        covector = control[1]
-        weights = control[2:]
         pulses = self.pulses(control, dynamic_p)
         final_propagator = self.final_state(control, dynamic_p)
         loss_after_optimizer = self.loss(control, dynamic_p)
         time_points = self.static_p["integrator"]["ts"]
 
-        jnp.savez(filename, target, gate_time, covector, *pulses, time_points, final_propagator, loss_after_optimizer, *weights)
+        jnp.savez(filename, target, gate_time, *pulses, time_points, final_propagator, loss_after_optimizer)
 
+    def pulse_fns(self, control, dynamic_p):
+        control_pulses = self.pulses(control, dynamic_p)
+        def zoh(weights):
+            n_pieces = jnp.size(weights, 0)
+            return lambda t: piecewise_cst_interp(t, weights, n_pieces)
+
+        return jax.tree.map(zoh, control_pulses)
+
+    def validate_concrete_pulses(self, time_pulse_fns_pair, dynamic_p, dt0=1e-1, solver=Dopri8(), stepsize_controller=PIDController(atol=1e-7, rtol=1e-5), **kwargs):
+        U0 = self.static_p["system"]["initial_state"]
+        Hc = self.static_p["system"]["ctrl"]
+        H0 = dynamic_p["drift"]
+
+        U_final = diffeqsolve(
+            ODETerm(vector_field_schrodinger),
+            t0=0.0, t1=1.0, dt0=dt0,
+            y0=U0,
+            args=(H0, Hc, *time_pulse_fns_pair),
+            solver=solver,
+            stepsize_controller=stepsize_controller,
+            **kwargs
+        ).ys[0, ...]
+
+        loss_fn = self.static_p["loss_fn"]
+        U1 = dynamic_p["target"]
+        return loss_fn(dagger(U1) @ U_final, None)
+
+    def plot_results(self, control, dynamic_p, losses, **kwargs):
+        T = control[0]
+        Ms = self.static_p["constraints"]["max_amplitude"]
+        ts = self.static_p["integrator"]["ts"]
+        pulses = self.pulses(control, dynamic_p)  # g -> pulse
+        fig, axes = plt.subplots(1, 1 + len(pulses), **kwargs)
+
+        # LOSS
+        axes[0].semilogy(losses, '-x', color="k")
+        axes[0].set_title(f"Gate time: $T =${T[0] / (2 * jnp.pi):.3f} ($\\times 2\\pi/\\omega_c$)")
+        axes[0].set_xlabel("Iteration")
+        axes[0].set_ylabel("Loss")
+        axes[0].grid(True)
+
+        # PULSES
+        for (i, (pulse, M)) in enumerate(zip(pulses, Ms)):
+            energy = jnp.linalg.norm(pulse, axis=1)
+            ax = axes[i + 1]
+            ax.plot(ts, pulse, linewidth=3)
+            ax.plot(ts, energy, linestyle='--', color='purple', label="$norm$", linewidth=3)
+            ax.plot(ts, M * jnp.ones_like(ts), color='k', linewidth=0.75)
+            ax.plot(ts, -M * jnp.ones_like(ts), color='k', linewidth=0.75)
+            ax.plot(ts, 0 * ts, color='k', linewidth=0.75)
+            ax.set_xlabel(r"Time $t/T$")
+            ax.grid(True)
+            ax.legend(loc='upper right')
+
+        plt.tight_layout()
+        fig.show()
+
+    def vector_field(self, U, t, p):
+        pass
+
+    def projector(self):
+        pass
+
+    def params_to_pulses(self, t, weights):
+        pass
+    
     def tree_flatten(self):
         return (), self.static_p
 
