@@ -13,7 +13,6 @@ def initial_guess(method):
         theta_u = rand_weights(K[1], jnp.array([1, 5, 5, 1])) # amplitude u
         theta_v = rand_weights(K[2], jnp.array([1, 5, 5, 1])) # amplitude v
         return T, g, theta_u, theta_v
-
     elif method == "grape":
         n_pieces = 10*(d + 1)
         T = 0.1 * 2 * jnp.pi * jnp.ones(1)  # time horizon

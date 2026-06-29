@@ -10,8 +10,8 @@ from scripts._user_fns import *
 ##############################
 ######## METHOD CHOICE #######
 ##############################
-method = "grape"
-# method = "magicarp"
+# method = "grape"
+method = "magicarp"
 
 ##############################
 ##### PHYSICAL PARAMETERS ####

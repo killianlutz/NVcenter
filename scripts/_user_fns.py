@@ -37,38 +37,9 @@ class Magicarp(ControlSystem):
     def __init__(self, static_parameters):
         super().__init__(static_parameters)
 
-    # def vector_field(self, U, t, p):
-    #     control, dynamic_p, static_p = p
-    #     Ms = static_p["constraints"]["max_amplitude"]
-    #     H0 = dynamic_p["drift"]
-    #     Hc = static_p["system"]["ctrl"]
-    #     su_basis = static_p["su_basis"]
-    #
-    #     T, g_vec, weights = control[0], control[1], control[2:]
-    #     g = vec_to_matrix(g_vec, su_basis)
-    #     g_conjugate_U = U @ g @ dagger(U)
-    #
-    #     def pulses_fn(H, M, weight):
-    #         pulses = jax.vmap(
-    #             lambda x, y: jnp.real(trace_dot(x, y)),
-    #             in_axes=(0, None)
-    #         )(H, g_conjugate_U)
-    #         pulses_scaled = pulses / jnp.linalg.norm(pulses)
-    #         control_hamiltonian = jnp.tensordot(pulses_scaled, H, axes=1)
-    #         amplitude = self.params_to_pulses(t, weight)
-    #         return M * amplitude * control_hamiltonian
-    #
-    #     control_hamiltonian = jnp.sum(
-    #         jnp.stack(jax.tree.map(pulses_fn, Hc, Ms, weights)),
-    #         axis=0
-    #     )
-    #
-    #     return (-1j * T) * (H0 + control_hamiltonian) @ U
     def vector_field(self, U, t, p):
-        control, dynamic_p, static_p = p
-        T = control[0]
-        return T*super().vector_field(U, t, p)
-
+        control, _, _ = p
+        return control[0]*super().vector_field(U, t, p)
 
     def projector(self):
         # same pytree structure as the control, one projector per control variable
@@ -115,9 +86,8 @@ class Grape(ControlSystem):
         super().__init__(static_parameters)
 
     def vector_field(self, U, t, p):
-        control, dynamic_p, static_p = p
-        T = control[0]
-        return T*super().vector_field(U, t, p)
+        control, _, _ = p
+        return control[0]*super().vector_field(U, t, p)
 
     def projector(self):
         return (

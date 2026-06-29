@@ -171,20 +171,6 @@ class ControlSystem:
         losses, n_iter = val[-3:-1]
         return optimized_control, losses, n_iter
 
-    # def pulses_shape(self, control, dynamic_p):
-    #     pass
-    #
-    # def pulses_amplitude(self, control, dynamic_p):
-    #     pass
-
-    # def pulses(self, control, dynamic_p):
-    #     pulses_amplitude = self.pulses_amplitude(control, dynamic_p)
-    #     pulses_shape = self.pulses_shape(control, dynamic_p)
-    #     fn = jax.vmap(lambda x, y: x*y, (None, 1), 1)
-    #     return jax.tree.map(lambda a, s: fn(a, s),
-    #         pulses_amplitude, pulses_shape
-    #     )
-
     def validate(self, control, dynamic_p, dt0=1e-1, solver=Dopri8(), stepsize_controller=PIDController(atol=1e-7, rtol=1e-5), **kwargs):
         U0 = self.static_p["system"]["initial_state"]
         args = (control, dynamic_p, self.static_p)
@@ -271,9 +257,9 @@ class ControlSystem:
         fig.show()
 
     def vector_field(self, U, t, p):
-        control, dynamic_p, static_p = p
+        control, dynamic_p, _ = p
         H0 = dynamic_p["drift"]
-        Hc = static_p["system"]["ctrl"]
+        Hc = self.static_p["system"]["ctrl"]
 
         pulses = self.params_to_pulses(t, control, dynamic_p, U)
         control_hamiltonian = jnp.sum(
@@ -289,7 +275,7 @@ class ControlSystem:
     def projector(self):
         pass
 
-    def params_to_pulses(self, t, weights):
+    def params_to_pulses(self, t, control, dynamic_p, state):
         pass
 
     def pulses(self, control, dynamic_p):
