@@ -16,16 +16,18 @@ from scripts._user_fns import *
 char_freq = 1e6 # MHz
 n_nuclei = 1 # nuclear spins
 
-omega_S = 1e9/char_freq # zero-splitting
-omega_I = 1e-4*omega_S # zero-splitting: nuclear (same for every nuclei)
-Omega_Re = 1e6/char_freq # Rabi frequency
-Omega_Rn = Omega_Re
-A_parallels = jnp.array([1e6/char_freq for _ in range(n_nuclei)]) # hyperfine coupling for each nuclei
-
-Ms = (1e1*Omega_Re, 1e1*Omega_Rn) # maximal control amplitudes
-model = nvcenter_model(n_nuclei, A_parallels)
+physical_parameters = {
+    "A_parallels": jnp.ones(n_nuclei)*1e6/char_freq, # hyperfine coupling for each nuclear
+    "A_perps": jnp.ones(n_nuclei)*1e6/char_freq,
+    "omega_I": jnp.ones(1)*1e5/char_freq, # zero-splitting: nuclear
+    "omega_S": jnp.ones(1)*1e9/char_freq # zero-splitting: electron
+}
+model = nvcenter_model(n_nuclei, physical_parameters)
 target_gate = electron_flip_conditional_nuclear((1, ), n_nuclei) # electron flip conditional first nuclear spin
 
+Omega_Re = 1e6/char_freq # Rabi frequency
+Omega_Rn = Omega_Re
+Ms = (1e1*Omega_Re, 1e1*Omega_Rn) # maximal control amplitudes
 
 ##############################
 ##### NUMERICAL SCHEME #######
@@ -68,7 +70,7 @@ static_p = {
     "optimizer": {
         "normalize_gradient": True,
         "n_max": 100,
-        "abstol_loss": 1e-7,
+        "abstol_loss": 1e-5,
         "reltol_dist": 1e-6,
         "line_search": {
             "search_fn": golden_section, # signature (f, dynamic, static) -> step, val
@@ -83,5 +85,6 @@ static_p = {
             "iterative_solver": lx.CG(atol=1e-8, rtol=1e-3, max_steps=500),
             "direct_solver": lx.QR()
         }
-    }
+    },
+    "physical_parameters": physical_parameters
 }

@@ -25,22 +25,28 @@ def nvc_op(op, n_nuclei):
          for i in range(n_nuclei + 1)]
     )
 
-def nvcenter_model(n_nuclei, A_parallels):
-    # control operators assuming drift is linear combination of Sz and sum Izi
-    if not jnp.size(A_parallels) == n_nuclei:
+def nvcenter_model(n_nuclei, physical_parameters):
+    # control operators assuming drift is linear combination of Sz
+    A_parallels = physical_parameters["A_parallels"]
+    A_perps = physical_parameters["A_perps"]
+    omega_I = physical_parameters["omega_I"]
+    # omega_S = physical_parameters["omega_S"]
+
+    are_size_ok = jnp.array([jnp.size(x) == n_nuclei for x in (A_parallels, A_perps)])
+    if not jnp.prod(are_size_ok) == 1:
         raise ValueError("the size of the vector of couplings must match n_nuclei")
 
     Sx = nvc_op("x0", n_nuclei)
     Sy = nvc_op("y0", n_nuclei)
     Ixi = [nvc_op("x" + str(1 + i), n_nuclei) for i in range(n_nuclei)]
-    Iyi = [nvc_op("y" + str(1 + i), n_nuclei) for i in range(n_nuclei)]
+    Izi = [omega_I * nvc_op("z" + str(1 + i), n_nuclei) for i in range(n_nuclei)]
+    SzIxi = [A_per * nvc_op("z0", n_nuclei) @ nvc_op("x" + str(1 + i), n_nuclei) for (i, A_per) in enumerate(A_perps)]
     SzIzi = [A_par * nvc_op("z0", n_nuclei) @ nvc_op("z" + str(1 + i), n_nuclei) for (i, A_par) in enumerate(A_parallels)]
 
-    drift = jnp.sum(jnp.stack(SzIzi), axis=0)
+    drift = jnp.sum(jnp.stack(Izi), axis=0) + jnp.sum(jnp.stack(SzIxi), axis=0) + jnp.sum(jnp.stack(SzIzi), axis=0)
     electronic_ctrl = jnp.stack((Sx, Sy))
     nuclear_ctrl = jnp.stack((
         jnp.sum(jnp.stack(Ixi), axis=0),
-        jnp.sum(jnp.stack(Iyi), axis=0)
     ))
 
     return drift, electronic_ctrl, nuclear_ctrl

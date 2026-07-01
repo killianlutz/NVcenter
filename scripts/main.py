@@ -14,18 +14,18 @@ solve_fn = jax.jit(csys.solve_ocp)
 def initial_guess(control_system):
     if isinstance(control_system, Magicarp):
         K = jax.random.split(keys[0], 3)
-        T = 0.1 * 2 * jnp.pi * jnp.ones(1) # time horizon
+        T = 0.5 * 2 * jnp.pi * jnp.ones(1) # time horizon
         g = jax.random.normal(K[0], su_dim) # initial covector
         theta_u = rand_weights(K[1], jnp.array([1, 5, 5, 1])) # amplitude u
         theta_v = rand_weights(K[2], jnp.array([1, 5, 5, 1])) # amplitude v
-        return T, g, theta_u, theta_v
+        return T, g, (theta_u, theta_v)
 
     elif isinstance(control_system, Grape):
         n_pieces = 10*(d + 1)
-        T = 0.1 * 2 * jnp.pi * jnp.ones(1)  # time horizon
+        T = 0.5 * 2 * jnp.pi * jnp.ones(1)  # time horizon
         u = 1e-3 * jnp.ones((n_pieces, jnp.size(ctrl[0], 0))) # u
         v = 1e-3 * jnp.ones((n_pieces, jnp.size(ctrl[1], 0))) # v
-        return T, u, v
+        return T, (u, v)
 
     else:
         raise ValueError("only available systems: Magicarp, Grape")

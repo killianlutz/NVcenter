@@ -117,6 +117,7 @@ class ControlSystem:
         e, next_loss = search_fn(loss_along_line, p, (search_parameters, reference_loss))
         return jnp.pow(10.0, e), next_loss
 
+    @jax.jit(static_argnums=0)
     def optimizer_step(self, control, dynamic_p):
         direction, current_loss = self.natural_gradient(control, dynamic_p)
         learning_rate, next_loss = self.line_search(control, dynamic_p, direction, current_loss)
@@ -230,7 +231,7 @@ class ControlSystem:
         T = control[0]
         Ms = self.static_p["constraints"]["max_amplitude"]
         ts = self.static_p["integrator"]["ts"]
-        pulses = self.pulses(control, dynamic_p)  # g -> pulse
+        pulses = self.pulses(control, dynamic_p) # g -> pulse
         fig, axes = plt.subplots(1, 1 + len(pulses), **kwargs)
 
         # LOSS
@@ -281,13 +282,14 @@ class ControlSystem:
     def pulses(self, control, dynamic_p):
         ts = self.static_p["integrator"]["ts"]
         Us = self.trajectory(control, dynamic_p)
-        control_pulses = jax.vmap(
-                lambda t, U: jnp.array(self.params_to_pulses(t, control, dynamic_p, U)),
-                in_axes=(0, 0),
-                out_axes=1
-        )(ts, Us)
-
-        return tuple(control_pulses)
+        def pulse(i):
+            return jax.vmap(
+                lambda t, U: self.params_to_pulses(t, control, dynamic_p, U)[i],
+                in_axes=(0, 0)
+            )(ts, Us)
+        n_independent_controls = len(control[-1])
+        indices = tuple(jnp.arange(n_independent_controls, dtype=jnp.int16))
+        return jax.tree.map(pulse, indices)
 
     def tree_flatten(self):
         return (), self.static_p
